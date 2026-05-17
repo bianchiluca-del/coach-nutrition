@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+  -webkit-tap-highlight-color: transparent;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+}
+
+/* Pas de délai 300ms sur les taps iOS */
+button, [role="button"], a {
+  touch-action: manipulation;
+}
+
+/* Empêche le bounce iOS au scroll top (effet "natif app") */
+html {
+  overscroll-behavior-y: contain;
+}
+
+/* Anti-zoom auto iOS quand on touche un input (font 16+ requis) */
+input, textarea, select {
+  font-size: 16px;
+}
+
+/* Safe area iPhone (notch + home indicator) */
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+.safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
+/* Empêche la sélection accidentelle sur les boutons/cards */
+button, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Smooth scroll natif */
+* {
+  -webkit-overflow-scrolling: touch;
+}
+
