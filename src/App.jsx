@@ -1089,7 +1089,7 @@ export default function App() {
   // Macros
   // ⚠️ La CIBLE = somme du plan de base UNIQUEMENT (sans les items aiAdded hors plan).
   // Un croissant ajouté par l'IA hors plan ne doit PAS augmenter la cible journalière.
-  const target = plan.reduce((acc, m) => {
+  const target = USERS[currentUserId].plan.reduce((acc, m) => {
     if (m.conditional) return acc; // les repas conditionnels ne comptent pas dans la cible par défaut
     m.items.forEach(i => {
       if (i.aiAdded) return; // exclut les items ajoutés par l'IA hors plan
