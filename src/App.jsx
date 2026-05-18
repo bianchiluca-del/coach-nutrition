@@ -1668,6 +1668,7 @@ PRIORITÉ: atteindre protéines totales > calories > glucides timing training`;
             plan: newPlan,
             status: newStatus,
             insight: newInsight,
+            collapsed: { ...u.collapsed, ...Object.fromEntries(processedActions.filter(a => a.type === 'add_item' && a.applied === 'accepted').map(a => [a.meal_id, false])) },
             changesSinceAnalysis: 0,
           },
         };
@@ -1902,8 +1903,30 @@ PRIORITÉ: atteindre protéines totales > calories > glucides timing training`;
                     onSwapProtein={swapProtein}
                     accent={ACCENT_THEME_BY_PROFILE[currentProfile]}
                   />
-                ))}
+                ))}          {(() => {
+  const extras = plan.flatMap(m => m.items.filter(i => i.aiAdded && status[`${m.id}-${i.id}`] === 'done').map(i => ({...i, mealName: m.name})));
+  if (!extras.length) return null;
+  return (
+    <div className="bg-violet-50 rounded-xl border border-violet-200 p-3 mt-2">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-violet-600 mb-2">✨ Extras mangés hors plan</div>
+      <div className="space-y-1">
+        {extras.map((item, i) => (
+          <div key={i} className="bg-white/80 rounded-lg p-2.5 flex items-center gap-2">
+            <div className="w-2 h-2 bg-violet-400 rounded-full flex-shrink-0"/>
+            <div className="flex-1">
+              <div className="text-sm font-medium text-slate-800">{item.name}{item.qty && <span className="text-slate-500 font-normal"> · {item.qty}</span>}</div>
+              <div className="text-[10px] text-slate-500 font-mono">{item.cal} kcal · P{item.p} · G{item.g} · L{item.l}</div>
+              <div className="text-[9px] text-violet-500">{item.mealName}</div>
+            </div>
+            <span className="text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-bold">IA</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+})()}
               </div>
+    
             )}
 
             {tab === 'plan' && (
