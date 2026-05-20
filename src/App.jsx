@@ -1436,7 +1436,18 @@ Boissons:
 - Bière 5%: 43/0.5/3.5/0 (33cl ≈ 142kcal) · Vin rouge: 85/0/2.6/0 (15cl ≈ 128kcal)
 - Coca: 42/0/10.6/0 (33cl ≈ 139kcal) · Jus orange: 45/0.7/10/0.2
 
-PRIORITÉ: atteindre protéines totales > calories > glucides timing training`;
+PRIORITÉ: atteindre protéines totales > calories > glucides timing training`🎯 REQUÊTES LIFESTYLE (repas plaisir, cheat day, envies):
+Quand l'utilisateur demande des "repas plaisir", un "cheat day", ou exprime une envie générale SANS préciser d'aliment:
+- Ne pas demander de clarification — agir DIRECTEMENT
+- Proposer 2-3 modifications concrètes: remplacer items du plan par équivalents plus gourmands
+- Garder protéines proches de la cible, être flexible sur glucides/lipides
+- Substituts plaisir: poulet → steak/saumon, séré → skyr+granola, dattes → chocolat, féculents → pâtes
+- Toujours auto_apply: false pour ces propositions (l'utilisateur choisit)
+
+🔍 MESSAGES VAGUES SANS ALIMENT:
+Si le message est vague mais l'intention claire → faire hypothèses raisonnables et proposer quelque chose.
+Ne JAMAIS répondre UNIQUEMENT par demandes de clarification — toujours inclure au moins 1 proposition concrète.
+Si vraiment aucun contexte → demander l'aliment ET proposer quelque chose en attendant.;
 
       const userMsg = userQuestion ||
         "Analyse et propose les ajustements nécessaires pour atteindre les cibles.";
