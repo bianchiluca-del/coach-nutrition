@@ -3,9 +3,12 @@ import { createRoot } from 'react-dom/client'
 import './storage-shim.js'
 import './index.css'
 import App from './App.jsx'
+import AuthGate from './components/AuthGate.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <App />
+    <AuthGate>
+      {(session, profileId) => <App session={session} accountProfileId={profileId} />}
+    </AuthGate>
   </StrictMode>,
 )
