@@ -140,9 +140,9 @@ export default function Login() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  minLength={6}
+                  minLength={mode === 'signup' ? 8 : undefined}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-[16px] text-slate-900 outline-none transition focus:border-violet-300 focus:bg-white focus:ring-2 focus:ring-violet-100 touch-manipulation"
-                  placeholder={mode === 'signup' ? 'Au moins 6 caractères' : 'Votre mot de passe'}
+                  placeholder={mode === 'signup' ? 'Au moins 8 caractères' : 'Votre mot de passe'}
                 />
               </label>
             )}
