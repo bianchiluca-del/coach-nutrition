@@ -108,3 +108,5 @@ Pour ajouter un troisième profil, duplique un bloc `PLAN_*`, ajoute une entrée
 
 App développée par Luca Bianchi pour son suivi HYROX (et celui d'Émilie).
 Plan nutritionnel basé sur le programme "The Genius" du coach Andy.\n\n## Bêta questionnaire personnalisé\n\nLe parcours d’onboarding crée un plan personnel Standard, Training et Repos, puis lance une calibration de trois semaines.\n
+
+<!-- deployment-check: 2026-08-13T00:00:00+02:00 -->
