@@ -1500,6 +1500,30 @@ const DEFAULT_UID = Object.keys(USERS)[0]; // 1er profil/mode dispo (robuste que
 // Default mode quand on bascule entre profils
 const DEFAULT_MODE_BY_PROFILE = { luca: 'standard', emilie: 'easy-sucre' };
 
+function registerNutritionProfile(nutritionProfile) {
+  if (!nutritionProfile?.profile_id || !nutritionProfile?.plan_modes_json) return;
+  const profileId = nutritionProfile.profile_id;
+  const modes = Object.values(nutritionProfile.plan_modes_json);
+  if (!PROFILES.includes(profileId)) PROFILES.push(profileId);
+  MODES_BY_PROFILE[profileId] = modes.map(mode => ({ id: mode.id, label: mode.label, emoji: mode.emoji, desc: mode.desc }));
+  BASE_PROFILE[profileId] = {
+    name: nutritionProfile.display_name,
+    avatar: '🙂', accent: 'violet', accentGradient: 'from-violet-600 to-fuchsia-600', accentRing: '#8b5cf6',
+    profile: `${nutritionProfile.display_name}, programme personnel créé à partir du questionnaire initial. Respecter allergies, exclusions et contraintes présentes dans le profil.`,
+  };
+  DEFAULT_MODE_BY_PROFILE[profileId] = modes.find(mode => mode.id === 'standard')?.id || modes[0]?.id;
+  for (const mode of modes) {
+    const uid = `${profileId}-${mode.id}`;
+    USERS[uid] = {
+      id: uid, profileId, modeId: mode.id, modeLabel: mode.label, modeEmoji: mode.emoji,
+      modeDesc: mode.desc, name: nutritionProfile.display_name, avatar: '🙂', accent: 'violet',
+      accentGradient: 'from-violet-600 to-fuchsia-600', accentRing: '#8b5cf6',
+      profile: `${BASE_PROFILE[profileId].profile} Mode actif : ${mode.label} (${mode.desc}).`,
+      plan: mode.plan || [],
+    };
+  }
+}
+
 // ===== UTILS =====
 
 const today = () => new Date().toISOString().split('T')[0];
@@ -3418,7 +3442,8 @@ const storage = window.storage || {
 
 // ===== APP =====
 
-export default function App({ session, accountProfileId }) {
+export default function App({ session, accountProfileId, nutritionProfile }) {
+  registerNutritionProfile(nutritionProfile);
   const allowedUserIds = Object.keys(USERS).filter(uid => USERS[uid].profileId === accountProfileId);
   const accountDefaultUserId = `${accountProfileId}-${DEFAULT_MODE_BY_PROFILE[accountProfileId]}`;
   const [currentUserId, setCurrentUserId] = useState(accountDefaultUserId);
@@ -4576,6 +4601,15 @@ RÈGLES
           </span>
         </div>
         <ModeSwitcher currentProfile={currentProfile} currentMode={currentMode} onSelect={handleModeSwitch} />
+
+        {nutritionProfile?.calibration_json?.phase === 'initial' && (
+          <div className="mb-4 mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-violet-950">
+            <div className="flex items-center justify-between gap-3">
+              <div><p className="text-sm font-black">⚖️ Calibration en cours · 3 semaines</p><p className="mt-1 text-xs leading-relaxed">Pesées lundi, mercredi et samedi. Nous suivons la moyenne : jamais une valeur isolée.</p></div>
+              <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[10px] font-black text-violet-700">Plan déjà actif</span>
+            </div>
+          </div>
+        )}
 
         {/* DASHBOARD */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 sm:p-6 mb-4">
