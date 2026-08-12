@@ -11,6 +11,26 @@ export async function profileForSession(session) {
   return data?.profile_id || null;
 }
 
+export async function nutritionProfileForSession(session) {
+  if (!session?.user?.id) return null;
+  const { data, error } = await supabase
+    .from('user_nutrition_profiles')
+    .select('user_id, profile_id, display_name, questionnaire_json, plan_modes_json, calibration_json, onboarding_status, updated_at')
+    .eq('user_id', session.user.id)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+export async function saveNutritionProfile(profile) {
+  const { data, error } = await supabase.from('user_nutrition_profiles').upsert({
+    ...profile,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id' }).select().single();
+  if (error) throw error;
+  return data;
+}
+
 export async function loadCloudSnapshot({ userId, profileId, dateKey }) {
   const [dailyResult, preferencesResult, trackingResult] = await Promise.all([
     supabase
