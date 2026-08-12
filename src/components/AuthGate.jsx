@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, Loader2, LogOut } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
-import { profileForSession } from '../lib/cloudSync';
+import { nutritionProfileForSession, profileForSession } from '../lib/cloudSync';
 import Login from './Login';
+import OnboardingFlow from './OnboardingFlow';
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
   const [profileId, setProfileId] = useState(null);
+  const [nutritionProfile, setNutritionProfile] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,7 +16,17 @@ export default function AuthGate({ children }) {
 
     const applySession = async (nextSession) => {
       setSession(nextSession);
-      setProfileId(nextSession ? await profileForSession(nextSession) : null);
+      if (!nextSession) {
+        setProfileId(null);
+        setNutritionProfile(null);
+        return;
+      }
+      const [privateProfileId, memberProfile] = await Promise.all([
+        profileForSession(nextSession),
+        nutritionProfileForSession(nextSession),
+      ]);
+      setProfileId(privateProfileId);
+      setNutritionProfile(memberProfile);
     };
 
     const initializeSession = async () => {
@@ -59,20 +71,11 @@ export default function AuthGate({ children }) {
     return <Login />;
   }
 
-  if (!profileId) {
-    return (
-      <div className="min-h-screen bg-slate-50 px-4 text-slate-700 safe-bottom flex items-center justify-center">
-        <div className="w-full max-w-md rounded-3xl border border-amber-200 bg-white p-6 text-center shadow-sm">
-          <AlertCircle size={24} className="mx-auto mb-3 text-amber-500" />
-          <h1 className="text-lg font-bold text-slate-900">Compte en attente d’un programme</h1>
-          <p className="mt-2 text-sm text-slate-600">Aucun plan nutritionnel n’est encore associé à cette adresse. Les programmes de Luca et Émilie restent privés.</p>
-          <button onClick={() => supabase.auth.signOut()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">
-            <LogOut size={15} /> Se déconnecter
-          </button>
-        </div>
-      </div>
-    );
+  if (!profileId && !nutritionProfile) {
+    return <OnboardingFlow session={session} onComplete={setNutritionProfile} />;
   }
 
-  return typeof children === 'function' ? children(session, profileId) : children;
+  if (!profileId && nutritionProfile?.onboarding_status !== 'completed') return <OnboardingFlow session={session} onComplete={setNutritionProfile} />;
+
+  return typeof children === 'function' ? children(session, profileId || nutritionProfile.profile_id, nutritionProfile) : children;
 }
