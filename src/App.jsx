@@ -1466,8 +1466,8 @@ const PLAN_BY_USER_ID = {
 };
 
 // USERS = chaque combo (profil, mode) est un user virtuel avec son propre plan et état.
-// Permet de switcher en 1 clic entre modes (Standard/Hard/Easy/Cheat) tout en gardant
-// l'état isolé (consommé, sauté, IA) par mode. Pas de refactoring profond nécessaire.
+// Les plans restent isolés par mode. Lors d'un changement en cours de journée, seules
+// les macros déjà consommées sont reportées dans le nouveau mode (voir __modeCarryover).
 function buildUsers() {
   const out = {};
   for (const profileId of PROFILES) {
@@ -3844,6 +3844,7 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
   }, { cal: 0, p: 0, g: 0, l: 0 });
 
   // Le CONSOMMÉ inclut TOUT ce qui est marqué done, avec le grammage réel si renseigné.
+  const modeCarryover = realQty.__modeCarryover || null;
   const consumed = plan.reduce((acc, m) => {
     m.items.forEach(i => {
       if (status[`${m.id}-${i.id}`] === 'done') {
@@ -3859,7 +3860,12 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
       }
     });
     return acc;
-  }, { cal: 0, p: 0, g: 0, l: 0 });
+  }, {
+    cal: Number(modeCarryover?.cal) || 0,
+    p: Number(modeCarryover?.p) || 0,
+    g: Number(modeCarryover?.g) || 0,
+    l: Number(modeCarryover?.l) || 0,
+  });
 
   // remaining peut être NÉGATIF si dépassement → affichage "en trop" en rouge
   const remaining = {
@@ -4250,9 +4256,14 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
     setInsightError(null);
 
     try {
-      // Format compact : le modèle reçoit les mêmes données utiles avec beaucoup moins de tokens.
+      const isModeTransitionOptimization = userQuestion?.startsWith('Changement de mode :');
+      // Format compact : lors d'un changement de mode, on n'envoie que les aliments
+      // encore disponibles dans le nouveau plan. Le bilan déjà mangé est agrégé plus bas.
       const planSummary = plan.map(meal => {
-        const items = meal.items.map(i => {
+        const items = meal.items.filter(i => {
+          if (!isModeTransitionOptimization) return true;
+          return !status[`${meal.id}-${i.id}`] && !i.suppl;
+        }).map(i => {
           const key = `${meal.id}-${i.id}`;
           const s = status[key] || 'pending';
           const macros = i.suppl ? 'suppl' : `${i.cal}/${i.p}/${i.g}/${i.l}`;
@@ -4281,7 +4292,7 @@ RÈGLES
 2. auto_apply=true uniquement pour un fait déjà réalisé ou en cours. Toute suggestion future a auto_apply=false.
 3. La cible est fixe. Après auto_apply, calcule restant_final=restant_actuel-somme(impacts). Les chiffres cités doivent être ceux de restant_final; si négatif, parle de dépassement. Préfère une formulation qualitative si un total est incertain.
 4. impact cal/P/G/L est obligatoire pour add_item, modify_item et remove_item. Estime raisonnablement les aliments hors plan.
-5. Donne 2 à 4 observations utiles et 0 à 3 actions. Propose une adaptation future seulement si un écart significatif reste à corriger.
+5. ${isModeTransitionOptimization ? 'Changement de mode: 0 à 2 observations très brèves et 0 à 3 actions maximum. Modifie seulement les aliments P du nouveau plan pour répartir le RESTANT; ne recrée pas les aliments déjà consommés.' : 'Donne 2 à 4 observations utiles et 0 à 3 actions. Propose une adaptation future seulement si un écart significatif reste à corriger.'}
 6. Un repas COND n'entre pas dans la cible et ne doit être conseillé que si l'utilisateur mentionne un entraînement.
 7. Priorité: protéines, puis calories, puis glucides autour de l'entraînement.
 8. Pour Émilie, Meal 3 fait toujours partie de la cible; seule son heure change les nuits de garde. Ne jamais conseiller de le sauter.`;
@@ -4530,14 +4541,51 @@ RÈGLES
     setTab('bilan');
   };
 
-  // Switch de MODE dans le profil actif : on bascule sur (profil, mode) et on mémorise
-  // ce mode comme "dernier utilisé" pour ce profil.
+  // Switch de MODE : le plan alimentaire change, mais le bilan réellement consommé
+  // reste acquis. Le nouveau plan repart proprement pour éviter tout double comptage.
   const handleModeSwitch = (modeId) => {
     if (modeId === currentMode) return;
-    setCurrentUserId(`${currentProfile}-${modeId}`);
+    const nextUserId = `${currentProfile}-${modeId}`;
+    const hasConsumed = consumed.cal > 0 || consumed.p > 0 || consumed.g > 0 || consumed.l > 0;
+    if (hasConsumed) {
+      const nextMode = MODES_BY_PROFILE[currentProfile]?.find(mode => mode.id === modeId);
+      const accepted = confirm(
+        `Passer en mode ${nextMode?.label || modeId} ?\n\n` +
+        `${Math.round(consumed.cal)} kcal déjà consommées seront conservées. ` +
+        `Le plan restant sera recalculé selon le nouveau mode.`
+      );
+      if (!accepted) return;
+
+      updateUserData(nextUserId, {
+        plan: deepClone(USERS[nextUserId].plan),
+        status: {},
+        insight: null,
+        collapsed: {},
+        changesSinceAnalysis: 1,
+        realQty: {
+          __modeCarryover: {
+            cal: consumed.cal,
+            p: consumed.p,
+            g: consumed.g,
+            l: consumed.l,
+            fromModeId: currentMode,
+            fromModeLabel: user.modeLabel,
+            switchedAt: new Date().toISOString(),
+          },
+        },
+      });
+      lastAnalyzedHashRef.current[nextUserId] = null;
+    }
+    setCurrentUserId(nextUserId);
     setLastModeByProfile(prev => ({ ...prev, [currentProfile]: modeId }));
     setInsightError(null);
     setTab('bilan');
+  };
+
+  const optimizeRemainingAfterModeSwitch = () => {
+    generateInsight(
+      `Changement de mode : optimise uniquement les quantités et aliments des repas restants du mode ${user.modeLabel} pour approcher les macros RESTANT. Ce qui est déjà consommé est définitif et ne doit jamais être ajouté une seconde fois.`
+    );
   };
 
   // UI data
@@ -4638,6 +4686,32 @@ RÈGLES
             <RemainingDisplay value={remaining.g} unit="g G" label="restants" color="text-amber-600" />
             <RemainingDisplay value={remaining.l} unit="g L" label="restants" color="text-pink-600" />
           </div>
+
+          {modeCarryover && (
+            <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-3.5">
+              <div className="flex items-start gap-2.5">
+                <Repeat size={17} className="mt-0.5 shrink-0 text-violet-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-violet-900">
+                    Journée adaptée depuis le mode {modeCarryover.fromModeLabel || modeCarryover.fromModeId}
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-violet-700">
+                    {Math.round(modeCarryover.cal || 0)} kcal déjà consommées conservées. Les valeurs restantes ci-dessus sont recalculées gratuitement selon le mode {user.modeLabel}.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={optimizeRemainingAfterModeSwitch}
+                    disabled={!canAnalyze}
+                    className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-[0.99] active:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {insightLoading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                    Optimiser les repas restants avec l’IA
+                  </button>
+                  <p className="mt-1.5 text-center text-[10px] text-violet-500">Facultatif · un seul appel IA compact</p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="mb-4">
             <button
