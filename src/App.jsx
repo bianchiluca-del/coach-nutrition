@@ -3804,6 +3804,100 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
     return () => clearTimeout(timer);
   }, [usersData, cloudReady, session?.user?.id, accountProfileId]);
 
+  // Migration transparente des changements de mode effectués avec l'ancienne
+  // version, qui ne conservait que les macros agrégées. Les états du mode source
+  // existent encore dans Supabase : on peut donc recocher les aliments identiques
+  // dans le mode actuel sans modifier le total déjà consommé.
+  useEffect(() => {
+    if (!cloudReady || cloudApplyingRef.current) return;
+    const destinationData = usersData[currentUserId];
+    const legacyCarryover = destinationData?.realQty?.__modeCarryover;
+    if (!legacyCarryover?.fromModeId || legacyCarryover.matchedItems !== undefined) return;
+
+    const sourceUserId = `${USERS[currentUserId]?.profileId}-${legacyCarryover.fromModeId}`;
+    const sourceData = usersData[sourceUserId];
+    if (!sourceData?.plan) return;
+
+    const normalizeLabel = value => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+    const nextPlan = deepClone(destinationData.plan);
+    const nextStatus = { ...(destinationData.status || {}) };
+    const nextRealQty = { ...(destinationData.realQty || {}) };
+    const usedDestinationItems = new Set(
+      Object.entries(nextStatus).filter(([, state]) => state === 'done').map(([key]) => key)
+    );
+    const matchedDestinationMacros = { cal: 0, p: 0, g: 0, l: 0 };
+
+    sourceData.plan.forEach(sourceMeal => sourceMeal.items.forEach(sourceItem => {
+      const sourceKey = `${sourceMeal.id}-${sourceItem.id}`;
+      if (sourceData.status?.[sourceKey] !== 'done' || sourceItem.suppl) return;
+      const foodName = normalizeLabel(sourceItem.name);
+      const mealName = normalizeLabel(sourceMeal.name);
+      const candidates = [];
+      nextPlan.forEach(destinationMeal => destinationMeal.items.forEach(destinationItem => {
+        const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
+        if (destinationItem.suppl || usedDestinationItems.has(destinationKey)) return;
+        if (normalizeLabel(destinationItem.name) !== foodName) return;
+        candidates.push({
+          destinationMeal,
+          destinationItem,
+          destinationKey,
+          sameMeal: normalizeLabel(destinationMeal.name) === mealName,
+        });
+      }));
+      const match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
+      if (!match) return;
+
+      usedDestinationItems.add(match.destinationKey);
+      nextStatus[match.destinationKey] = 'done';
+      const sourcePlannedGrams = parseGrams(sourceItem.qty);
+      const sourceRealGrams = sourceData.realQty?.[sourceKey];
+      const consumedGrams = sourceRealGrams !== undefined ? Number(sourceRealGrams) : sourcePlannedGrams;
+      const destinationPlannedGrams = parseGrams(match.destinationItem.qty);
+      let destinationRatio = 1;
+      if (Number.isFinite(consumedGrams) && consumedGrams > 0 && destinationPlannedGrams > 0) {
+        nextRealQty[match.destinationKey] = consumedGrams;
+        destinationRatio = consumedGrams / destinationPlannedGrams;
+      }
+      matchedDestinationMacros.cal += match.destinationItem.cal * destinationRatio;
+      matchedDestinationMacros.p += match.destinationItem.p * destinationRatio;
+      matchedDestinationMacros.g += match.destinationItem.g * destinationRatio;
+      matchedDestinationMacros.l += match.destinationItem.l * destinationRatio;
+    }));
+
+    const previousTotal = {
+      cal: Number(legacyCarryover.cal) || 0,
+      p: Number(legacyCarryover.p) || 0,
+      g: Number(legacyCarryover.g) || 0,
+      l: Number(legacyCarryover.l) || 0,
+    };
+    const migratedCount = usedDestinationItems.size - Object.values(destinationData.status || {}).filter(state => state === 'done').length;
+    nextRealQty.__modeCarryover = {
+      ...legacyCarryover,
+      cal: previousTotal.cal - matchedDestinationMacros.cal,
+      p: previousTotal.p - matchedDestinationMacros.p,
+      g: previousTotal.g - matchedDestinationMacros.g,
+      l: previousTotal.l - matchedDestinationMacros.l,
+      totalCal: previousTotal.cal,
+      totalP: previousTotal.p,
+      totalG: previousTotal.g,
+      totalL: previousTotal.l,
+      matchedItems: Math.max(0, migratedCount),
+      migratedAt: new Date().toISOString(),
+    };
+    updateUserData(currentUserId, prev => ({
+      status: nextStatus,
+      realQty: nextRealQty,
+      changesSinceAnalysis: (prev.changesSinceAnalysis || 0) + 1,
+    }));
+    // Une seule tentative par mode chargé ; l'état migré est ensuite synchronisé.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloudReady, currentUserId]);
+
   useEffect(() => {
     if (!cloudReady || cloudApplyingRef.current || !session?.user?.id) return;
     const timer = setTimeout(() => {
@@ -5104,49 +5198,3 @@ RÈGLES
             {isListening && <p className="mt-2 text-xs font-semibold text-red-600">● J’écoute… parle naturellement, puis vérifie le texte avant l’envoi.</p>}
             {voiceError && <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-xs text-amber-700">{voiceError}</p>}
             <p className="mt-2 text-[10px] text-slate-400">La dictée reste côté navigateur : aucun token audio OpenAI.</p>
-          </div>
-        </div>
-
-        <div className="text-center text-[10px] text-slate-400 py-4">
-          Reset auto à minuit · Cible {user.name} : {target.cal.toFixed(0)} kcal · {target.p.toFixed(0)}g P · {target.g.toFixed(0)}g G · {target.l.toFixed(0)}g L
-        </div>
-      </div>
-
-      </div>{/* end journal */}
-
-      {/* Additional sections */}
-      {activeSection === 'plan' && (
-        <div className="pt-2"><PlanAlimView currentProfile={currentProfile} /></div>
-      )}
-      {activeSection === 'suivi' && (
-        <div className="pt-2"><SuiviView profileId={currentProfile} suiviData={suiviData} onUpdateSuivi={updateSuivi} /></div>
-      )}
-      {activeSection === 'mesures' && (
-        <div className="pt-2"><MesuresView profileId={currentProfile} mesuresData={mesuresData} onUpdateMesures={updateMesures} /></div>
-      )}
-      {activeSection === 'settings' && (
-        <AccountSettings session={session} profileName={BASE_PROFILE[accountProfileId]?.name} syncState={syncState} onSignOut={handleSignOut} signingOut={signingOut} />
-      )}
-      {scannerTarget && (
-        <RealtimeScanner
-          mealId={scannerTarget.mealId}
-          mealName={scannerTarget.mealName}
-          initialStream={scannerTarget.stream}
-          onAdd={item => {
-            addManualFood(scannerTarget.mealId, item, parseGrams(item.qty) || 100);
-            setScannerTarget(null);
-          }}
-          onClose={() => setScannerTarget(null)}
-        />
-      )}
-      <BottomNav active={activeSection} onChange={setActiveSection} />
-      {showAdmin && (
-        <AdminPanel
-          profiles={[accountProfileId]}
-          onClose={() => setShowAdmin(false)}
-          onSavePlan={handleAdminSavePlan}
-        />
-      )}
-    </div>
-  );
-}
