@@ -3812,7 +3812,7 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
     if (!cloudReady || cloudApplyingRef.current) return;
     const destinationData = usersData[currentUserId];
     const legacyCarryover = destinationData?.realQty?.__modeCarryover;
-    if (!legacyCarryover?.fromModeId || legacyCarryover.matchedItems !== undefined) return;
+    if (!legacyCarryover?.fromModeId || legacyCarryover.migrationVersion === 2) return;
 
     const sourceUserId = `${USERS[currentUserId]?.profileId}-${legacyCarryover.fromModeId}`;
     const sourceData = usersData[sourceUserId];
@@ -3849,7 +3849,43 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
           sameMeal: normalizeLabel(destinationMeal.name) === mealName,
         });
       }));
-      const match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
+      let match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
+
+      // Si l'aliment a été remplacé (ex. compote -> miel), son id de ligne reste
+      // identique : on reproduit ce remplacement dans le mode d'arrivée.
+      if (!match && !sourceItem.aiAdded && !sourceItem.manualAdded) {
+        const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
+        const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id && !item.suppl);
+        if (destinationMeal && destinationItem) {
+          const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
+          if (!usedDestinationItems.has(destinationKey)) {
+            Object.assign(destinationItem, deepClone(sourceItem), { id: destinationItem.id });
+            match = { destinationMeal, destinationItem, destinationKey, sameMeal: true };
+          }
+        }
+      }
+
+      // Un ajout hors plan n'existe forcément pas dans l'autre mode. On l'ajoute
+      // au même repas comme consommation reportée, sans changer la cible du plan.
+      if (!match) {
+        const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id)
+          || nextPlan.find(meal => normalizeLabel(meal.name) === mealName);
+        if (destinationMeal) {
+          const destinationItem = {
+            ...deepClone(sourceItem),
+            id: `carryover-${sourceMeal.id}-${sourceItem.id}`,
+            aiAdded: true,
+            carriedFromMode: legacyCarryover.fromModeId,
+          };
+          destinationMeal.items.push(destinationItem);
+          match = {
+            destinationMeal,
+            destinationItem,
+            destinationKey: `${destinationMeal.id}-${destinationItem.id}`,
+            sameMeal: true,
+          };
+        }
+      }
       if (!match) return;
 
       usedDestinationItems.add(match.destinationKey);
@@ -3867,6 +3903,18 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
       matchedDestinationMacros.p += match.destinationItem.p * destinationRatio;
       matchedDestinationMacros.g += match.destinationItem.g * destinationRatio;
       matchedDestinationMacros.l += match.destinationItem.l * destinationRatio;
+    }));
+
+    // Les aliments explicitement sautés restent sautés dans le mode d'arrivée.
+    sourceData.plan.forEach(sourceMeal => sourceMeal.items.forEach(sourceItem => {
+      const sourceKey = `${sourceMeal.id}-${sourceItem.id}`;
+      if (sourceData.status?.[sourceKey] !== 'skip') return;
+      const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
+      const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id)
+        || destinationMeal?.items.find(item => normalizeLabel(item.name) === normalizeLabel(sourceItem.name));
+      if (!destinationMeal || !destinationItem) return;
+      const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
+      if (!nextStatus[destinationKey]) nextStatus[destinationKey] = 'skip';
     }));
 
     const previousTotal = {
@@ -3887,6 +3935,7 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
       totalG: previousTotal.g,
       totalL: previousTotal.l,
       matchedItems: Math.max(0, migratedCount),
+      migrationVersion: 2,
       migratedAt: new Date().toISOString(),
     };
     updateUserData(currentUserId, prev => ({
@@ -4685,7 +4734,39 @@ RÈGLES
             sameMeal: normalizeLabel(destinationMeal.name) === mealName,
           });
         }));
-        const match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
+        let match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
+
+        if (!match && !sourceItem.aiAdded && !sourceItem.manualAdded) {
+          const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
+          const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id && !item.suppl);
+          if (destinationMeal && destinationItem) {
+            const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
+            if (!usedDestinationItems.has(destinationKey)) {
+              Object.assign(destinationItem, deepClone(sourceItem), { id: destinationItem.id });
+              match = { destinationMeal, destinationItem, destinationKey, sameMeal: true };
+            }
+          }
+        }
+
+        if (!match) {
+          const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id)
+            || nextPlan.find(meal => normalizeLabel(meal.name) === mealName);
+          if (destinationMeal) {
+            const destinationItem = {
+              ...deepClone(sourceItem),
+              id: `carryover-${sourceMeal.id}-${sourceItem.id}`,
+              aiAdded: true,
+              carriedFromMode: currentMode,
+            };
+            destinationMeal.items.push(destinationItem);
+            match = {
+              destinationMeal,
+              destinationItem,
+              destinationKey: `${destinationMeal.id}-${destinationItem.id}`,
+              sameMeal: true,
+            };
+          }
+        }
         if (!match) return;
 
         usedDestinationItems.add(match.destinationKey);
@@ -4706,6 +4787,19 @@ RÈGLES
         matchedDestinationMacros.l += match.destinationItem.l * destinationRatio;
       });
 
+      // Conserver aussi les choix "non consommé" : ils ne doivent pas redevenir
+      // des aliments à prendre après un simple changement de mode.
+      plan.forEach(sourceMeal => sourceMeal.items.forEach(sourceItem => {
+        const sourceKey = `${sourceMeal.id}-${sourceItem.id}`;
+        if (status[sourceKey] !== 'skip') return;
+        const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
+        const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id)
+          || destinationMeal?.items.find(item => normalizeLabel(item.name) === normalizeLabel(sourceItem.name));
+        if (!destinationMeal || !destinationItem) return;
+        const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
+        if (!nextStatus[destinationKey]) nextStatus[destinationKey] = 'skip';
+      }));
+
       // Le reliquat agrégé conserve exactement le total déjà consommé. Les aliments
       // concordants sont, eux, représentés visuellement par les coches ci-dessus.
       const residualCarryover = {
@@ -4721,6 +4815,7 @@ RÈGLES
         totalG: consumed.g,
         totalL: consumed.l,
         matchedItems: usedDestinationItems.size,
+        migrationVersion: 2,
         fromModeId: currentMode,
         fromModeLabel: user.modeLabel,
         switchedAt: new Date().toISOString(),
@@ -5198,3 +5293,49 @@ RÈGLES
             {isListening && <p className="mt-2 text-xs font-semibold text-red-600">● J’écoute… parle naturellement, puis vérifie le texte avant l’envoi.</p>}
             {voiceError && <p className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 text-xs text-amber-700">{voiceError}</p>}
             <p className="mt-2 text-[10px] text-slate-400">La dictée reste côté navigateur : aucun token audio OpenAI.</p>
+          </div>
+        </div>
+
+        <div className="text-center text-[10px] text-slate-400 py-4">
+          Reset auto à minuit · Cible {user.name} : {target.cal.toFixed(0)} kcal · {target.p.toFixed(0)}g P · {target.g.toFixed(0)}g G · {target.l.toFixed(0)}g L
+        </div>
+      </div>
+
+      </div>{/* end journal */}
+
+      {/* Additional sections */}
+      {activeSection === 'plan' && (
+        <div className="pt-2"><PlanAlimView currentProfile={currentProfile} /></div>
+      )}
+      {activeSection === 'suivi' && (
+        <div className="pt-2"><SuiviView profileId={currentProfile} suiviData={suiviData} onUpdateSuivi={updateSuivi} /></div>
+      )}
+      {activeSection === 'mesures' && (
+        <div className="pt-2"><MesuresView profileId={currentProfile} mesuresData={mesuresData} onUpdateMesures={updateMesures} /></div>
+      )}
+      {activeSection === 'settings' && (
+        <AccountSettings session={session} profileName={BASE_PROFILE[accountProfileId]?.name} syncState={syncState} onSignOut={handleSignOut} signingOut={signingOut} />
+      )}
+      {scannerTarget && (
+        <RealtimeScanner
+          mealId={scannerTarget.mealId}
+          mealName={scannerTarget.mealName}
+          initialStream={scannerTarget.stream}
+          onAdd={item => {
+            addManualFood(scannerTarget.mealId, item, parseGrams(item.qty) || 100);
+            setScannerTarget(null);
+          }}
+          onClose={() => setScannerTarget(null)}
+        />
+      )}
+      <BottomNav active={activeSection} onChange={setActiveSection} />
+      {showAdmin && (
+        <AdminPanel
+          profiles={[accountProfileId]}
+          onClose={() => setShowAdmin(false)}
+          onSavePlan={handleAdminSavePlan}
+        />
+      )}
+    </div>
+  );
+}
