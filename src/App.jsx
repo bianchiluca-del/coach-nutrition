@@ -20,6 +20,7 @@ import {
 import { supabase } from './lib/supabaseClient';
 import AccountSettings from './components/AccountSettings.jsx';
 import { deleteFoodFavorite, favoriteToEntry, loadFoodFavorites, saveFoodFavorite } from './lib/foodFavorites';
+import { localDateKey } from './lib/date';
 import {
   loadCloudSnapshot,
   saveDailyStates,
@@ -1526,8 +1527,9 @@ function registerNutritionProfile(nutritionProfile) {
 
 // ===== UTILS =====
 
-const today = () => new Date().toISOString().split('T')[0];
+const today = () => localDateKey();
 const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
+const logicalModeId = value => String(value || '').replace(/-(training|rest)$/i, '');
 
 function extractJSON(text) {
   if (!text) return null;
@@ -3278,9 +3280,9 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures }) => {
   const entries = [...(mesuresData[profileId]||[])].sort((a,b)=>new Date(a.date)-new Date(b.date));
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ date: new Date().toISOString().split('T')[0] });
+  const [form, setForm] = useState({ date: localDateKey() });
   const first = entries[0]; const last = entries[entries.length-1];
-  const openAdd = () => { setEditId(null); setForm({ date:new Date().toISOString().split('T')[0], ...Object.fromEntries(MESURE_FIELDS.map(f=>[f.key,''])) }); setShowForm(true); };
+  const openAdd = () => { setEditId(null); setForm({ date:localDateKey(), ...Object.fromEntries(MESURE_FIELDS.map(f=>[f.key,''])) }); setShowForm(true); };
   const openEdit = e => { setEditId(e.id); setForm({...e}); setShowForm(true); };
   const save = () => { if(!form.date) return; onUpdateMesures(profileId, editId?'edit':'add', {...form, id:editId||`m-${Date.now()}`}); setShowForm(false); };
   const del = id => { if(window.confirm('Supprimer cette entrée ?')) onUpdateMesures(profileId,'delete',id); };
@@ -3854,8 +3856,9 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
       // Si l'aliment a été remplacé (ex. compote -> miel), son id de ligne reste
       // identique : on reproduit ce remplacement dans le mode d'arrivée.
       if (!match && !sourceItem.aiAdded && !sourceItem.manualAdded) {
-        const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
-        const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id && !item.suppl);
+        const destinationMeal = nextPlan.find(meal => logicalModeId(meal.id) === logicalModeId(sourceMeal.id))
+          || nextPlan.find(meal => normalizeLabel(meal.name) === mealName);
+        const destinationItem = destinationMeal?.items.find(item => logicalModeId(item.id) === logicalModeId(sourceItem.id) && !item.suppl);
         if (destinationMeal && destinationItem) {
           const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
           if (!usedDestinationItems.has(destinationKey)) {
@@ -3909,8 +3912,9 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
     sourceData.plan.forEach(sourceMeal => sourceMeal.items.forEach(sourceItem => {
       const sourceKey = `${sourceMeal.id}-${sourceItem.id}`;
       if (sourceData.status?.[sourceKey] !== 'skip') return;
-      const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
-      const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id)
+      const destinationMeal = nextPlan.find(meal => logicalModeId(meal.id) === logicalModeId(sourceMeal.id))
+        || nextPlan.find(meal => normalizeLabel(meal.name) === normalizeLabel(sourceMeal.name));
+      const destinationItem = destinationMeal?.items.find(item => logicalModeId(item.id) === logicalModeId(sourceItem.id))
         || destinationMeal?.items.find(item => normalizeLabel(item.name) === normalizeLabel(sourceItem.name));
       if (!destinationMeal || !destinationItem) return;
       const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
@@ -4230,7 +4234,7 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
   // Auto-sync journal kcal → suivi du jour
   useEffect(() => {
     if (!currentProfile) return;
-    const today = new Date().toISOString().split('T')[0];
+    const today = localDateKey();
     const calConsumed = Math.round(consumed.cal);
     if (calConsumed <= 0) return;
     setSuiviData(prev => {
@@ -4480,7 +4484,7 @@ RÈGLES
         try {
           const usageKey = 'coach-nutrition-api-usage-v1';
           const previous = JSON.parse(localStorage.getItem(usageKey) || '{}');
-          const today = new Date().toISOString().slice(0, 10);
+          const today = localDateKey();
           const day = previous[today] || { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
           previous[today] = {
             calls: day.calls + 1,
@@ -4737,8 +4741,9 @@ RÈGLES
         let match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
 
         if (!match && !sourceItem.aiAdded && !sourceItem.manualAdded) {
-          const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
-          const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id && !item.suppl);
+          const destinationMeal = nextPlan.find(meal => logicalModeId(meal.id) === logicalModeId(sourceMeal.id))
+            || nextPlan.find(meal => normalizeLabel(meal.name) === mealName);
+          const destinationItem = destinationMeal?.items.find(item => logicalModeId(item.id) === logicalModeId(sourceItem.id) && !item.suppl);
           if (destinationMeal && destinationItem) {
             const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
             if (!usedDestinationItems.has(destinationKey)) {
@@ -4792,8 +4797,9 @@ RÈGLES
       plan.forEach(sourceMeal => sourceMeal.items.forEach(sourceItem => {
         const sourceKey = `${sourceMeal.id}-${sourceItem.id}`;
         if (status[sourceKey] !== 'skip') return;
-        const destinationMeal = nextPlan.find(meal => meal.id === sourceMeal.id);
-        const destinationItem = destinationMeal?.items.find(item => item.id === sourceItem.id)
+        const destinationMeal = nextPlan.find(meal => logicalModeId(meal.id) === logicalModeId(sourceMeal.id))
+          || nextPlan.find(meal => normalizeLabel(meal.name) === normalizeLabel(sourceMeal.name));
+        const destinationItem = destinationMeal?.items.find(item => logicalModeId(item.id) === logicalModeId(sourceItem.id))
           || destinationMeal?.items.find(item => normalizeLabel(item.name) === normalizeLabel(sourceItem.name));
         if (!destinationMeal || !destinationItem) return;
         const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
