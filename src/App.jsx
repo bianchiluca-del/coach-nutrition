@@ -4556,23 +4556,89 @@ RÈGLES
       );
       if (!accepted) return;
 
+      const nextPlan = deepClone(USERS[nextUserId].plan);
+      const nextStatus = {};
+      const nextRealQty = {};
+      const usedDestinationItems = new Set();
+      const matchedDestinationMacros = { cal: 0, p: 0, g: 0, l: 0 };
+      const normalizeLabel = value => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+
+      // Une consommation identique est cochée dans le nouveau mode. On privilégie
+      // le même repas (ex. goûter), puis le même aliment ailleurs si les intitulés
+      // des repas diffèrent légèrement entre deux modes.
+      const consumedItems = plan.flatMap(sourceMeal => sourceMeal.items
+        .filter(sourceItem => status[`${sourceMeal.id}-${sourceItem.id}`] === 'done' && !sourceItem.suppl)
+        .map(sourceItem => ({ sourceMeal, sourceItem }))
+      );
+
+      consumedItems.forEach(({ sourceMeal, sourceItem }) => {
+        const foodName = normalizeLabel(sourceItem.name);
+        const mealName = normalizeLabel(sourceMeal.name);
+        const candidates = [];
+        nextPlan.forEach(destinationMeal => destinationMeal.items.forEach(destinationItem => {
+          const destinationKey = `${destinationMeal.id}-${destinationItem.id}`;
+          if (destinationItem.suppl || usedDestinationItems.has(destinationKey)) return;
+          if (normalizeLabel(destinationItem.name) !== foodName) return;
+          candidates.push({
+            destinationMeal,
+            destinationItem,
+            destinationKey,
+            sameMeal: normalizeLabel(destinationMeal.name) === mealName,
+          });
+        }));
+        const match = candidates.find(candidate => candidate.sameMeal) || candidates[0];
+        if (!match) return;
+
+        usedDestinationItems.add(match.destinationKey);
+        nextStatus[match.destinationKey] = 'done';
+
+        const sourcePlannedGrams = parseGrams(sourceItem.qty);
+        const sourceRealGrams = realQty[`${sourceMeal.id}-${sourceItem.id}`];
+        const consumedGrams = sourceRealGrams !== undefined ? Number(sourceRealGrams) : sourcePlannedGrams;
+        const destinationPlannedGrams = parseGrams(match.destinationItem.qty);
+        let destinationRatio = 1;
+        if (Number.isFinite(consumedGrams) && consumedGrams > 0 && destinationPlannedGrams > 0) {
+          nextRealQty[match.destinationKey] = consumedGrams;
+          destinationRatio = consumedGrams / destinationPlannedGrams;
+        }
+        matchedDestinationMacros.cal += match.destinationItem.cal * destinationRatio;
+        matchedDestinationMacros.p += match.destinationItem.p * destinationRatio;
+        matchedDestinationMacros.g += match.destinationItem.g * destinationRatio;
+        matchedDestinationMacros.l += match.destinationItem.l * destinationRatio;
+      });
+
+      // Le reliquat agrégé conserve exactement le total déjà consommé. Les aliments
+      // concordants sont, eux, représentés visuellement par les coches ci-dessus.
+      const residualCarryover = {
+        cal: consumed.cal - matchedDestinationMacros.cal,
+        p: consumed.p - matchedDestinationMacros.p,
+        g: consumed.g - matchedDestinationMacros.g,
+        l: consumed.l - matchedDestinationMacros.l,
+      };
+      nextRealQty.__modeCarryover = {
+        ...residualCarryover,
+        totalCal: consumed.cal,
+        totalP: consumed.p,
+        totalG: consumed.g,
+        totalL: consumed.l,
+        matchedItems: usedDestinationItems.size,
+        fromModeId: currentMode,
+        fromModeLabel: user.modeLabel,
+        switchedAt: new Date().toISOString(),
+      };
+
       updateUserData(nextUserId, {
-        plan: deepClone(USERS[nextUserId].plan),
-        status: {},
+        plan: nextPlan,
+        status: nextStatus,
         insight: null,
         collapsed: {},
         changesSinceAnalysis: 1,
-        realQty: {
-          __modeCarryover: {
-            cal: consumed.cal,
-            p: consumed.p,
-            g: consumed.g,
-            l: consumed.l,
-            fromModeId: currentMode,
-            fromModeLabel: user.modeLabel,
-            switchedAt: new Date().toISOString(),
-          },
-        },
+        realQty: nextRealQty,
       });
       lastAnalyzedHashRef.current[nextUserId] = null;
     }
@@ -4696,8 +4762,13 @@ RÈGLES
                     Journée adaptée depuis le mode {modeCarryover.fromModeLabel || modeCarryover.fromModeId}
                   </p>
                   <p className="mt-1 text-xs leading-relaxed text-violet-700">
-                    {Math.round(modeCarryover.cal || 0)} kcal déjà consommées conservées. Les valeurs restantes ci-dessus sont recalculées gratuitement selon le mode {user.modeLabel}.
+                    {Math.round(modeCarryover.totalCal ?? modeCarryover.cal ?? 0)} kcal déjà consommées conservées. Les valeurs restantes ci-dessus sont recalculées gratuitement selon le mode {user.modeLabel}.
                   </p>
+                  {modeCarryover.matchedItems > 0 && (
+                    <p className="mt-1.5 text-xs font-semibold text-emerald-700">
+                      ✓ {modeCarryover.matchedItems} aliment{modeCarryover.matchedItems > 1 ? 's' : ''} identique{modeCarryover.matchedItems > 1 ? 's' : ''} automatiquement coché{modeCarryover.matchedItems > 1 ? 's' : ''} dans le nouveau plan.
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={optimizeRemainingAfterModeSwitch}
