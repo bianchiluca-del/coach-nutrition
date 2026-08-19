@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AtSign, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, LogOut, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, AtSign, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, LogOut, ShieldCheck, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 const APP_URL = 'https://bianchiluca-del.github.io/coach-nutrition/';
@@ -20,6 +20,9 @@ export default function AccountSettings({ session, profileName, syncState, onSig
   const [busy, setBusy] = useState(null);
   const [emailNotice, setEmailNotice] = useState(null);
   const [passwordNotice, setPasswordNotice] = useState(null);
+  const [deletionPassword, setDeletionPassword] = useState('');
+  const [deletionConfirm, setDeletionConfirm] = useState('');
+  const [deletionNotice, setDeletionNotice] = useState(null);
 
   const verifyPassword = async (password) => {
     const { error } = await supabase.auth.signInWithPassword({ email: session.user.email, password });
@@ -75,6 +78,34 @@ export default function AccountSettings({ session, profileName, syncState, onSig
     } finally { setBusy(null); }
   };
 
+  const deleteAccount = async (event) => {
+    event.preventDefault();
+    setDeletionNotice(null);
+    if (deletionConfirm.trim().toUpperCase() !== 'SUPPRIMER') {
+      setDeletionNotice({ type: 'error', text: 'Écris SUPPRIMER pour confirmer.' });
+      return;
+    }
+    if (!deletionPassword) {
+      setDeletionNotice({ type: 'error', text: 'Confirme ton mot de passe actuel.' });
+      return;
+    }
+    if (!window.confirm('Supprimer définitivement ton compte, tes plans, ton suivi et tes mensurations ? Cette action est irréversible.')) return;
+    try {
+      setBusy('delete');
+      await verifyPassword(deletionPassword);
+      const { error } = await supabase.functions.invoke('delete-account', { body: { confirm: true } });
+      if (error) throw error;
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('coach-nutrition')) localStorage.removeItem(key);
+      });
+      await supabase.auth.signOut({ scope: 'local' });
+      window.location.reload();
+    } catch (error) {
+      setDeletionNotice({ type: 'error', text: error.message || 'Impossible de supprimer le compte.' });
+      setBusy(null);
+    }
+  };
+
   const inputClass = 'w-full min-h-12 rounded-xl border border-slate-200 bg-white px-3 text-base text-slate-800 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100';
   const passwordType = showPasswords ? 'text' : 'password';
 
@@ -118,6 +149,27 @@ export default function AccountSettings({ session, profileName, syncState, onSig
           {syncState === 'synced' ? <CheckCircle2 size={20} className="text-emerald-500" /> : <ShieldCheck size={20} className="text-amber-500" />}
           <div><h3 className="text-sm font-bold text-slate-800">Sauvegarde et sécurité</h3><p className="text-xs text-slate-500">{syncState === 'synced' ? 'Tes données sont sauvegardées dans le cloud.' : 'Synchronisation en cours ou connexion indisponible.'}</p></div>
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
+        <div className="mb-2 flex items-center gap-2"><ShieldCheck size={18} className="text-violet-600" /><h3 className="font-bold text-slate-800">Confidentialité des données</h3></div>
+        <p className="leading-relaxed">Tes informations servent uniquement à créer ton plan, calculer ton suivi et personnaliser les conseils. Elles sont stockées sur ton compte sécurisé et ne sont pas visibles par les autres utilisateurs.</p>
+        <p className="mt-2 text-xs text-slate-500">Tu peux retirer ton consentement à tout moment en supprimant ton compte ci-dessous. Cette suppression est définitive.</p>
+      </section>
+
+      <section className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+        <div className="mb-3 flex items-start gap-2">
+          <AlertTriangle size={19} className="mt-0.5 shrink-0 text-red-600" />
+          <div><h3 className="font-bold text-red-800">Supprimer définitivement mon compte</h3><p className="mt-1 text-xs leading-relaxed text-red-700">Tous tes plans, repas, favoris, suivis, mensurations et informations de questionnaire seront effacés.</p></div>
+        </div>
+        <form className="space-y-3" onSubmit={deleteAccount}>
+          <input type={passwordType} autoComplete="current-password" className={inputClass} value={deletionPassword} onChange={(e) => setDeletionPassword(e.target.value)} placeholder="Mot de passe actuel" />
+          <input type="text" autoComplete="off" className={inputClass} value={deletionConfirm} onChange={(e) => setDeletionConfirm(e.target.value)} placeholder="Écris SUPPRIMER" />
+          <Notice notice={deletionNotice} />
+          <button disabled={busy !== null} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-4 font-bold text-white disabled:opacity-50">
+            {busy === 'delete' ? <Loader2 size={17} className="animate-spin" /> : <Trash2 size={17} />} Supprimer mon compte
+          </button>
+        </form>
       </section>
 
       <button type="button" onClick={onSignOut} disabled={signingOut} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 font-bold text-red-600 disabled:opacity-50">
