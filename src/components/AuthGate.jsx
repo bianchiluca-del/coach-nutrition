@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { AlertCircle, Loader2, RotateCcw } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 import { nutritionProfileForSession, profileForSession } from '../lib/cloudSync';
 import Login from './Login';
@@ -10,6 +10,7 @@ export default function AuthGate({ children }) {
   const [profileId, setProfileId] = useState(null);
   const [nutritionProfile, setNutritionProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     let mounted = true;
@@ -30,10 +31,15 @@ export default function AuthGate({ children }) {
     };
 
     const initializeSession = async () => {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      if (mounted) {
-        await applySession(currentSession);
-        setLoading(false);
+      try {
+        setLoadError('');
+        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
+        if (error) throw error;
+        if (mounted) await applySession(currentSession);
+      } catch (error) {
+        if (mounted) setLoadError(error?.message || 'Connexion au service indisponible.');
+      } finally {
+        if (mounted) setLoading(false);
       }
     };
 
@@ -43,7 +49,8 @@ export default function AuthGate({ children }) {
       if (mounted) {
         setTimeout(async () => {
           if (!mounted) return;
-          try { await applySession(currentSession); }
+          try { setLoadError(''); await applySession(currentSession); }
+          catch (error) { if (mounted) setLoadError(error?.message || 'Connexion au service indisponible.'); }
           finally { if (mounted) setLoading(false); }
         }, 0);
       }
@@ -62,6 +69,21 @@ export default function AuthGate({ children }) {
           <Loader2 size={22} className="mx-auto mb-3 animate-spin text-violet-600" />
           <p className="text-sm font-medium text-slate-700">Chargement de l’application…</p>
           <p className="text-xs text-slate-500 mt-1">Initialisation de la session Supabase</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-700 flex items-center justify-center px-4 safe-bottom">
+        <div className="max-w-sm rounded-3xl border border-amber-200 bg-white p-6 text-center shadow-sm">
+          <AlertCircle size={24} className="mx-auto mb-3 text-amber-500" />
+          <h1 className="font-bold text-slate-900">Connexion momentanément indisponible</h1>
+          <p className="mt-2 text-sm text-slate-600">Tes données restent sauvegardées. Vérifie ta connexion puis réessaie.</p>
+          <button type="button" onClick={() => window.location.reload()} className="mt-4 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 font-bold text-white">
+            <RotateCcw size={17} /> Réessayer
+          </button>
         </div>
       </div>
     );
