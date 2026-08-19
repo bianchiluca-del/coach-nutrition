@@ -20,6 +20,7 @@ import {
 import { supabase } from './lib/supabaseClient';
 import AccountSettings from './components/AccountSettings.jsx';
 import CoachDashboard from './components/CoachDashboard.jsx';
+import ClientCoachAccess from './components/ClientCoachAccess.jsx';
 import { deleteFoodFavorite, favoriteToEntry, loadFoodFavorites, saveFoodFavorite } from './lib/foodFavorites';
 import { localDateKey } from './lib/date';
 import {
@@ -4878,6 +4879,7 @@ RÈGLES
   return (
     <div className="min-h-screen bg-slate-50 p-3 sm:p-6">
       <div className="max-w-3xl mx-auto pb-24 safe-bottom">
+        {!accessContext?.is_coach && <ClientCoachAccess section={activeSection} />}
         {/* Journal section - hidden when other section active */}
       <div style={{display: activeSection !== 'journal' ? 'none' : 'block'}}>
         {/* Header */}
