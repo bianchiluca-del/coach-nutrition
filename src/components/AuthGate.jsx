@@ -115,10 +115,10 @@ export default function AuthGate({ children }) {
   }
 
   if (!profileId && !nutritionProfile) {
-    return <OnboardingFlow session={session} onComplete={setNutritionProfile} />;
+    return <OnboardingFlow session={session} onComplete={setNutritionProfile} isBetaClient={accessContext?.is_beta_client} />;
   }
 
-  if (!profileId && nutritionProfile?.onboarding_status !== 'completed') return <OnboardingFlow session={session} onComplete={setNutritionProfile} />;
+  if (!profileId && nutritionProfile?.onboarding_status !== 'completed') return <OnboardingFlow session={session} onComplete={setNutritionProfile} isBetaClient={accessContext?.is_beta_client} />;
 
   return typeof children === 'function' ? children(session, profileId || nutritionProfile.profile_id, nutritionProfile, accessContext) : children;
 }
