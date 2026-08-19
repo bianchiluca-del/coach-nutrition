@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, AtSign, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, LogOut, ShieldCheck, Trash2 } from 'lucide-react';
+import { AlertTriangle, AtSign, CheckCircle2, Eye, EyeOff, KeyRound, Loader2, LogOut, ShieldCheck, Trash2, Users } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
 
 const APP_URL = 'https://bianchiluca-del.github.io/coach-nutrition/';
@@ -10,7 +10,7 @@ function Notice({ notice }) {
   return <div className={`rounded-xl border px-3 py-2.5 text-sm ${ok ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>{notice.text}</div>;
 }
 
-export default function AccountSettings({ session, profileName, syncState, onSignOut, signingOut }) {
+export default function AccountSettings({ session, profileName, syncState, onSignOut, signingOut, isCoach = false, onOpenCoach }) {
   const [email, setEmail] = useState(session?.user?.email || '');
   const [emailPassword, setEmailPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
@@ -120,6 +120,16 @@ export default function AccountSettings({ session, profileName, syncState, onSig
         <h2 className="text-lg font-bold text-slate-800">Paramètres du compte</h2>
         <p className="mt-1 text-xs text-slate-500">Compte de {profileName} · {session?.user?.email}</p>
       </div>
+
+      {isCoach && (
+        <section className="rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-600 text-white"><Users size={20} /></div>
+            <div className="min-w-0 flex-1"><h3 className="font-black text-slate-900">Pilotage de la bêta</h3><p className="mt-1 text-xs leading-relaxed text-slate-600">Crée les 10 invitations et suis l’activation des prospects sans ouvrir leurs données nutritionnelles.</p></div>
+          </div>
+          <button type="button" onClick={onOpenCoach} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 font-black text-white"><Users size={17} /> Ouvrir le tableau coach</button>
+        </section>
+      )}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center gap-2"><AtSign size={18} className="text-violet-600" /><h3 className="font-bold text-slate-800">Changer d’adresse e-mail</h3></div>
