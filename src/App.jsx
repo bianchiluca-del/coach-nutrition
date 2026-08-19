@@ -3479,6 +3479,7 @@ export default function App({ session, accountProfileId, nutritionProfile }) {
   const [rateLimitedUntil, setRateLimitedUntil] = useState(0);
   const [signingOut, setSigningOut] = useState(false);
   const [foodFavorites, setFoodFavorites] = useState([]);
+  const [pendingModeId, setPendingModeId] = useState(null);
 
   // Hash ref par user virtuel
   const lastAnalyzedHashRef = useRef(Object.fromEntries(Object.keys(USERS).map(uid => [uid, null])));
@@ -4690,19 +4691,11 @@ RÈGLES
 
   // Switch de MODE : le plan alimentaire change, mais le bilan réellement consommé
   // reste acquis. Le nouveau plan repart proprement pour éviter tout double comptage.
-  const handleModeSwitch = (modeId) => {
+  const applyModeSwitch = (modeId) => {
     if (modeId === currentMode) return;
     const nextUserId = `${currentProfile}-${modeId}`;
     const hasConsumed = consumed.cal > 0 || consumed.p > 0 || consumed.g > 0 || consumed.l > 0;
     if (hasConsumed) {
-      const nextMode = MODES_BY_PROFILE[currentProfile]?.find(mode => mode.id === modeId);
-      const accepted = confirm(
-        `Passer en mode ${nextMode?.label || modeId} ?\n\n` +
-        `${Math.round(consumed.cal)} kcal déjà consommées seront conservées. ` +
-        `Le plan restant sera recalculé selon le nouveau mode.`
-      );
-      if (!accepted) return;
-
       const nextPlan = deepClone(USERS[nextUserId].plan);
       const nextStatus = {};
       const nextRealQty = {};
@@ -4843,6 +4836,16 @@ RÈGLES
     setTab('bilan');
   };
 
+  const handleModeSwitch = (modeId) => {
+    if (modeId === currentMode) return;
+    const hasConsumed = consumed.cal > 0 || consumed.p > 0 || consumed.g > 0 || consumed.l > 0;
+    if (hasConsumed) {
+      setPendingModeId(modeId);
+      return;
+    }
+    applyModeSwitch(modeId);
+  };
+
   const optimizeRemainingAfterModeSwitch = () => {
     generateInsight(
       `Changement de mode : optimise uniquement les quantités et aliments des repas restants du mode ${user.modeLabel} pour approcher les macros RESTANT. Ce qui est déjà consommé est définitif et ne doit jamais être ajouté une seconde fois.`
@@ -4910,6 +4913,38 @@ RÈGLES
           </span>
         </div>
         <ModeSwitcher currentProfile={currentProfile} currentMode={currentMode} onSelect={handleModeSwitch} />
+
+        {pendingModeId && (
+          <div className="fixed inset-0 z-[80] flex items-end justify-center bg-slate-950/45 p-3 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="mode-switch-title">
+            <div className="w-full max-w-md rounded-3xl border border-violet-100 bg-white p-5 shadow-2xl">
+              <div className="flex items-start gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-100 text-violet-700"><Repeat size={20} /></div>
+                <div>
+                  <h2 id="mode-switch-title" className="text-lg font-black text-slate-950">
+                    Passer en mode {MODES_BY_PROFILE[currentProfile]?.find(mode => mode.id === pendingModeId)?.label || pendingModeId} ?
+                  </h2>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">
+                    <strong>{Math.round(consumed.cal)} kcal déjà consommées seront conservées.</strong> Les aliments identiques, les quantités réelles et les aliments sautés seront reportés ; le reste de la journée sera recalculé selon le nouveau mode.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => setPendingModeId(null)} className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 font-bold text-slate-600 active:bg-slate-100">Annuler</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const modeId = pendingModeId;
+                    setPendingModeId(null);
+                    applyModeSwitch(modeId);
+                  }}
+                  className="min-h-12 rounded-2xl bg-violet-600 px-4 font-black text-white shadow-lg shadow-violet-200 active:bg-violet-700"
+                >
+                  Confirmer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {nutritionProfile?.calibration_json?.phase === 'initial' && (
           <div className="mb-4 mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-violet-950">
