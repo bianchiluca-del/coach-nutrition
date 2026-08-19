@@ -8,7 +8,7 @@ import AuthGate from './components/AuthGate.jsx'
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <AuthGate>
-      {(session, profileId, nutritionProfile) => <App session={session} accountProfileId={profileId} nutritionProfile={nutritionProfile} />}
+      {(session, profileId, nutritionProfile, accessContext) => <App session={session} accountProfileId={profileId} nutritionProfile={nutritionProfile} accessContext={accessContext} />}
     </AuthGate>
   </StrictMode>,
 )
