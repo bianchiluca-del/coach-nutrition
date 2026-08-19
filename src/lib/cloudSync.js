@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { localDateKey } from './date';
 
 export async function profileForSession(session) {
   if (!session?.user?.id) return null;
@@ -99,7 +100,7 @@ export async function saveTracking({ userId, profileId, suivi, measurements }) {
   const entries = Object.entries(suivi || {});
   if (!entries.length && !(measurements || []).length) return;
 
-  const todayKey = new Date().toISOString().split('T')[0];
+  const todayKey = localDateKey();
   const rows = entries.length ? entries : [[todayKey, {}]];
   const { error } = await supabase.from('user_tracking').upsert(
     rows.map(([dateKey, entry]) => ({
