@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { LogIn, UserPlus, Mail, Lock, RotateCcw, ShieldCheck, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { LogIn, UserPlus, Mail, Lock, RotateCcw, ShieldCheck, AlertCircle, CheckCircle2, KeyRound } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+import { checkBetaInvite, rememberPendingInvite } from '../lib/betaAccess';
 
 export default function Login() {
   const authRedirectUrl = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState({ type: '', text: '' });
 
@@ -34,6 +36,9 @@ export default function Login() {
       }
 
       if (mode === 'signup') {
+        const inviteIsValid = await checkBetaInvite(inviteCode);
+        if (!inviteIsValid) throw new Error('Ce code bêta est invalide, expiré ou déjà utilisé.');
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -50,9 +55,11 @@ export default function Login() {
           return;
         }
 
+        rememberPendingInvite(inviteCode);
+
         setFeedback({
           type: 'success',
-          text: 'Compte créé. Vérifiez vos emails si la confirmation est activée.',
+          text: 'Compte créé. Confirme ton adresse e-mail : ton code bêta sera activé à la première connexion.',
         });
         setPassword('');
         return;
@@ -143,6 +150,24 @@ export default function Login() {
                   minLength={mode === 'signup' ? 8 : undefined}
                   className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-[16px] text-slate-900 outline-none transition focus:border-violet-300 focus:bg-white focus:ring-2 focus:ring-violet-100 touch-manipulation"
                   placeholder={mode === 'signup' ? 'Au moins 8 caractères' : 'Votre mot de passe'}
+                />
+              </label>
+            )}
+
+            {mode === 'signup' && (
+              <label className="block text-sm text-slate-700">
+                <span className="mb-1.5 flex items-center gap-1.5 font-medium">
+                  <KeyRound size={14} className="text-violet-500" /> Code d’invitation bêta
+                </span>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  value={inviteCode}
+                  onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+                  required
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-[16px] font-bold uppercase tracking-wider text-slate-900 outline-none transition focus:border-violet-300 focus:bg-white focus:ring-2 focus:ring-violet-100 touch-manipulation"
+                  placeholder="CN-XXXX-XXXX-XXXXXX"
                 />
               </label>
             )}
