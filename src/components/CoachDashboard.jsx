@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Check, Clipboard, KeyRound, Loader2, RefreshCw, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, Clipboard, Eye, KeyRound, Loader2, RefreshCw, ShieldCheck, UserPlus, Users, X } from 'lucide-react';
 import { createBetaInvite, loadCoachBetaDashboard, revokeBetaInvite } from '../lib/betaAccess';
+import CoachClientFile from './CoachClientFile';
 
 const formatDate = value => value ? new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 
@@ -20,6 +21,7 @@ export default function CoachDashboard({ onBack }) {
   const [newInvite, setNewInvite] = useState(null);
   const [copied, setCopied] = useState(false);
   const [pendingRevoke, setPendingRevoke] = useState(null);
+  const [selectedClient, setSelectedClient] = useState(null);
 
   const refresh = async () => {
     setError('');
@@ -64,6 +66,8 @@ export default function CoachDashboard({ onBack }) {
     finally { setBusy(false); }
   };
 
+  if (selectedClient) return <CoachClientFile client={selectedClient} onBack={() => { setSelectedClient(null); refresh(); }} />;
+
   return (
     <div className="space-y-4 pb-28 pt-2">
       <div className="flex items-center justify-between gap-3">
@@ -96,7 +100,9 @@ export default function CoachDashboard({ onBack }) {
             const state = statusConfig[row.status] || statusConfig.pending;
             return <article key={row.invite_id} className="p-4">
               <div className="flex items-start justify-between gap-3"><div><p className="font-black text-slate-900">{row.display_name || row.label}</p><p className="mt-0.5 break-all text-xs text-slate-500">{row.email || 'Code non utilisé'}</p></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${state.classes}`}>{state.label}</span></div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600"><div className="rounded-xl bg-slate-50 p-2"><span className="block text-[10px] uppercase text-slate-400">Onboarding</span>{row.onboarding_status === 'completed' ? 'Terminé' : row.status === 'active' ? 'À terminer' : '—'}</div><div className="rounded-xl bg-slate-50 p-2"><span className="block text-[10px] uppercase text-slate-400">Dernière activité</span>{formatDate(row.last_activity_at)}</div></div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600"><div className="rounded-xl bg-slate-50 p-2"><span className="block text-[10px] uppercase text-slate-400">Onboarding</span>{row.onboarding_status === 'completed' ? 'Terminé' : row.status === 'active' ? 'À terminer' : '—'}</div><div className="rounded-xl bg-slate-50 p-2"><span className="block text-[10px] uppercase text-slate-400">Accès données</span>{row.coach_data_consent ? 'Autorisé' : row.status === 'active' ? 'En attente' : '—'}</div><div className="rounded-xl bg-slate-50 p-2"><span className="block text-[10px] uppercase text-slate-400">Dernière activité</span>{formatDate(row.last_activity_at)}</div></div>
+              {row.status === 'active' && row.onboarding_status === 'completed' && row.coach_data_consent && <button type="button" onClick={() => setSelectedClient(row)} className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-3 text-sm font-black text-white"><Eye size={16} /> Ouvrir le dossier client</button>}
+              {row.status === 'active' && !row.coach_data_consent && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-semibold text-amber-700">Le client doit terminer l’onboarding et autoriser explicitement l’accès coach.</p>}
               {row.status === 'pending' && <button type="button" onClick={() => setPendingRevoke(row)} className="mt-3 min-h-10 rounded-xl border border-red-100 px-3 text-xs font-bold text-red-600">Désactiver ce code</button>}
             </article>;
           })}
