@@ -23,6 +23,7 @@ export default function AccountSettings({ session, profileName, syncState, onSig
   const [deletionPassword, setDeletionPassword] = useState('');
   const [deletionConfirm, setDeletionConfirm] = useState('');
   const [deletionNotice, setDeletionNotice] = useState(null);
+  const [showDeletionDialog, setShowDeletionDialog] = useState(false);
 
   const verifyPassword = async (password) => {
     const { error } = await supabase.auth.signInWithPassword({ email: session.user.email, password });
@@ -78,7 +79,7 @@ export default function AccountSettings({ session, profileName, syncState, onSig
     } finally { setBusy(null); }
   };
 
-  const deleteAccount = async (event) => {
+  const requestAccountDeletion = (event) => {
     event.preventDefault();
     setDeletionNotice(null);
     if (deletionConfirm.trim().toUpperCase() !== 'SUPPRIMER') {
@@ -89,7 +90,11 @@ export default function AccountSettings({ session, profileName, syncState, onSig
       setDeletionNotice({ type: 'error', text: 'Confirme ton mot de passe actuel.' });
       return;
     }
-    if (!window.confirm('Supprimer définitivement ton compte, tes plans, ton suivi et tes mensurations ? Cette action est irréversible.')) return;
+    setShowDeletionDialog(true);
+  };
+
+  const deleteAccount = async () => {
+    setShowDeletionDialog(false);
     try {
       setBusy('delete');
       await verifyPassword(deletionPassword);
@@ -162,7 +167,7 @@ export default function AccountSettings({ session, profileName, syncState, onSig
           <AlertTriangle size={19} className="mt-0.5 shrink-0 text-red-600" />
           <div><h3 className="font-bold text-red-800">Supprimer définitivement mon compte</h3><p className="mt-1 text-xs leading-relaxed text-red-700">Tous tes plans, repas, favoris, suivis, mensurations et informations de questionnaire seront effacés.</p></div>
         </div>
-        <form className="space-y-3" onSubmit={deleteAccount}>
+        <form className="space-y-3" onSubmit={requestAccountDeletion}>
           <input type={passwordType} autoComplete="current-password" className={inputClass} value={deletionPassword} onChange={(e) => setDeletionPassword(e.target.value)} placeholder="Mot de passe actuel" />
           <input type="text" autoComplete="off" className={inputClass} value={deletionConfirm} onChange={(e) => setDeletionConfirm(e.target.value)} placeholder="Écris SUPPRIMER" />
           <Notice notice={deletionNotice} />
@@ -175,6 +180,24 @@ export default function AccountSettings({ session, profileName, syncState, onSig
       <button type="button" onClick={onSignOut} disabled={signingOut} className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 font-bold text-red-600 disabled:opacity-50">
         {signingOut ? <Loader2 size={17} className="animate-spin" /> : <LogOut size={17} />} Se déconnecter
       </button>
+
+      {showDeletionDialog && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/50 p-3 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="delete-account-title">
+          <div className="w-full max-w-md rounded-3xl border border-red-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-100 text-red-700"><AlertTriangle size={21} /></div>
+              <div>
+                <h2 id="delete-account-title" className="text-lg font-black text-slate-950">Supprimer définitivement ce compte ?</h2>
+                <p className="mt-1 text-sm leading-relaxed text-slate-600">Tous les plans, repas, suivis, mensurations et informations du questionnaire seront effacés. Cette action est irréversible.</p>
+              </div>
+            </div>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button type="button" onClick={() => setShowDeletionDialog(false)} className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 font-bold text-slate-600 active:bg-slate-100">Annuler</button>
+              <button type="button" onClick={deleteAccount} className="min-h-12 rounded-2xl bg-red-600 px-4 font-black text-white shadow-lg shadow-red-200 active:bg-red-700">Supprimer définitivement</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
