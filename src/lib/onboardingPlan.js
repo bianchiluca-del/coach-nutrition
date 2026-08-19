@@ -17,6 +17,48 @@ const FOOD = {
   cottage: { name: 'Cottage cheese', per: 100, unit: 'g', cal: 98, p: 12, g: 3, l: 4 },
 };
 
+const FOOD_ALIASES = {
+  eggs: ['oeuf', 'oeufs'],
+  chickenHam: ['jambon', 'poulet', 'volaille'],
+  banana: ['banane'],
+  compote: ['compote', 'pomme'],
+  oats: ['avoine', 'gluten', 'ble'],
+  skyr: ['skyr', 'lait', 'lactose', 'produit laitier'],
+  chicken: ['poulet', 'volaille'],
+  rice: ['riz'],
+  potato: ['pomme de terre', 'patate'],
+  vegetables: ['legume'],
+  oliveOil: ['huile olive', 'olive'],
+  fruit: ['fruit'],
+  whey: ['whey', 'lait', 'lactose', 'produit laitier'],
+  salmon: ['saumon', 'poisson'],
+  bread: ['pain', 'gluten', 'ble'],
+  cottage: ['cottage', 'lait', 'lactose', 'produit laitier'],
+};
+
+const normalizeText = value => String(value || '').toLowerCase().normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '').replace(/œ/g, 'oe').replace(/[^a-z0-9]+/g, ' ').trim();
+
+function forbiddenFoodKeys(answers) {
+  const restrictions = normalizeText(`${answers.allergies || ''} ${answers.exclusions || ''}`);
+  if (!restrictions || /^(aucun|aucune|rien|neant)$/.test(restrictions)) return new Set();
+  return new Set(Object.entries(FOOD_ALIASES)
+    .filter(([, aliases]) => aliases.some(alias => restrictions.includes(normalizeText(alias))))
+    .map(([key]) => key));
+}
+
+export function getSafetyBlockReason(answers) {
+  const medical = normalizeText(`${answers.medical || ''} ${answers.digestion || ''}`);
+  const highRisk = [
+    'grossesse', 'enceinte', 'allaitement', 'diabete', 'insuline', 'maladie renale',
+    'insuffisance renale', 'dialyse', 'anorexie', 'boulimie', 'trouble alimentaire',
+    'tca', 'cancer', 'chimiotherapie',
+  ];
+  return highRisk.some(term => medical.includes(term))
+    ? 'Ta situation nécessite une validation individuelle par un professionnel de santé avant de générer un plan.'
+    : '';
+}
+
 const round1 = value => Math.round(value * 10) / 10;
 const slug = value => value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
@@ -82,94 +124,135 @@ function scaleItem(item, factor) {
 
 function normalizePlan(plan, target) {
   let next = JSON.parse(JSON.stringify(plan));
-  for (let pass = 0; pass < 4; pass += 1) {
-    let totals = sumPlan(next);
-    const proteinItems = next.flatMap(m => m.items).filter(i => i.swappable === 'protein');
-    const proteinNow = proteinItems.reduce((n, i) => n + i.p, 0);
-    const otherProtein = totals.p - proteinNow;
-    const proteinFactor = Math.max(0.65, Math.min(1.35, (target.p - otherProtein) / Math.max(1, proteinNow)));
-    next = next.map(m => ({ ...m, items: m.items.map(i => i.swappable === 'protein' ? scaleItem(i, proteinFactor) : i) }));
+  let totals = sumPlan(next);
+  const proteinItems = next.flatMap(m => m.items).filter(i => i.swappable === 'protein');
+  const proteinNow = proteinItems.reduce((n, i) => n + i.p, 0);
+  const otherProtein = totals.p - proteinNow;
+  const proteinFactor = Math.max(0.7, Math.min(1.35, (target.p - otherProtein) / Math.max(1, proteinNow)));
+  next = next.map(m => ({ ...m, items: m.items.map(i => i.swappable === 'protein' ? scaleItem(i, proteinFactor) : i) }));
 
-    totals = sumPlan(next);
-    const carbItems = next.flatMap(m => m.items).filter(i => i.swappable !== 'protein' && !i.name.includes('Huile') && i.g > i.p && i.g > i.l);
-    const carbNow = carbItems.reduce((n, i) => n + i.g, 0);
-    const otherCarbs = totals.g - carbNow;
-    const carbFactor = Math.max(0.65, Math.min(1.4, (target.g - otherCarbs) / Math.max(1, carbNow)));
-    next = next.map(m => ({ ...m, items: m.items.map(i => carbItems.some(c => c.id === i.id) ? scaleItem(i, carbFactor) : i) }));
+  totals = sumPlan(next);
+  const carbItems = next.flatMap(m => m.items).filter(i => i.swappable !== 'protein' && !i.name.includes('Huile') && !i.name.includes('Légumes') && i.g > i.p && i.g > i.l);
+  const carbNow = carbItems.reduce((n, i) => n + i.g, 0);
+  const otherCarbs = totals.g - carbNow;
+  const carbFactor = Math.max(0.7, Math.min(1.8, (target.g - otherCarbs) / Math.max(1, carbNow)));
+  const carbIds = new Set(carbItems.map(item => item.id));
+  next = next.map(m => ({ ...m, items: m.items.map(i => carbIds.has(i.id) ? scaleItem(i, carbFactor) : i) }));
 
-    totals = sumPlan(next);
-    const oilItems = next.flatMap(m => m.items).filter(i => i.name.includes('Huile'));
-    const oilFat = oilItems.reduce((n, i) => n + i.l, 0);
-    const otherFat = totals.l - oilFat;
-    const fatFactor = Math.max(0.2, Math.min(2.5, (target.l - otherFat) / Math.max(1, oilFat)));
-    next = next.map(m => ({ ...m, items: m.items.map(i => i.name.includes('Huile') ? scaleItem(i, fatFactor) : i) }));
-  }
+  totals = sumPlan(next);
+  const oilItems = next.flatMap(m => m.items).filter(i => i.name.includes('Huile'));
+  const oilFat = oilItems.reduce((n, i) => n + i.l, 0);
+  const otherFat = totals.l - oilFat;
+  const fatFactor = Math.max(0.25, Math.min(2, (target.l - otherFat) / Math.max(1, oilFat)));
+  next = next.map(m => ({ ...m, items: m.items.map(i => i.name.includes('Huile') ? scaleItem(i, fatFactor) : i) }));
   return next;
 }
 
 function buildStandardPlan(a, target) {
   const habits = `${a.breakfastHabit || ''} ${a.foodHabits || ''}`;
+  const forbidden = forbiddenFoodKeys(a);
+  const choose = (...keys) => keys.find(key => !forbidden.has(key)) || null;
+  const proteinAmount = (key, role = 'meal') => ({
+    eggs: role === 'balance' || role === 'snack' ? 2 : 3,
+    chickenHam: 80,
+    whey: role === 'balance' ? 25 : 30,
+    skyr: role === 'balance' ? 150 : 200,
+    cottage: 200,
+    chicken: role === 'dinner' ? 140 : 160,
+    salmon: role === 'dinner' ? 140 : 160,
+  }[key] || 100);
+  const add = (items, key, amount, id) => {
+    if (key) items.push(foodItem(key, amount, id));
+  };
   const breakfast = [];
   const reasons = [];
-  if (contains(habits, ['oeuf', 'œuf'])) breakfast.push(foodItem('eggs', 3, 'habit-eggs'));
-  else breakfast.push(foodItem('skyr', 200, 'breakfast-skyr'));
-  if (contains(habits, ['banane'])) breakfast.push(foodItem('banana', 120, 'habit-banana'));
-  else breakfast.push(foodItem('fruit', 150, 'breakfast-fruit'));
+  const breakfastProtein = contains(habits, ['oeuf', 'œuf'])
+    ? choose('eggs', 'skyr', 'chickenHam', 'whey')
+    : choose('skyr', 'eggs', 'chickenHam', 'whey');
+  add(breakfast, breakfastProtein, proteinAmount(breakfastProtein, 'breakfast'), 'breakfast-protein');
+  const breakfastFruit = contains(habits, ['banane']) ? choose('banana', 'fruit', 'compote') : choose('fruit', 'banana', 'compote');
+  add(breakfast, breakfastFruit, breakfastFruit === 'compote' ? 100 : 150, 'breakfast-fruit');
   if (contains(habits, ['miel', 'confiture', 'sirop'])) {
-    breakfast.push(foodItem('compote', 100, 'optimized-sweet'));
-    reasons.push('Le miel/confiture est remplacé par une compote sans sucre : même rôle sucré, moins dense en calories.');
-  } else if (contains(habits, ['avoine', 'porridge', 'muesli'])) breakfast.push(foodItem('oats', 45, 'habit-oats'));
-  else breakfast.push(foodItem('oats', 40, 'breakfast-oats'));
-  const breakfastProtein = breakfast.reduce((n, i) => n + i.p, 0);
-  if (breakfastProtein < target.p * 0.22) {
-    breakfast.push(foodItem('chickenHam', 80, 'protein-balance'));
-    reasons.push('Du jambon blanc de poulet complète les protéines du petit déjeuner sans bouleverser tes habitudes.');
+    const sweetAlternative = choose('compote', 'banana', 'fruit');
+    add(breakfast, sweetAlternative, sweetAlternative === 'compote' ? 100 : 120, 'optimized-sweet');
+    if (sweetAlternative) reasons.push('Le miel/confiture est remplacé par une option compatible avec tes exclusions et moins dense en calories.');
+  } else {
+    const breakfastCarb = choose('oats', 'bread', 'potato', 'rice');
+    add(breakfast, breakfastCarb, breakfastCarb === 'oats' ? (contains(habits, ['avoine', 'porridge', 'muesli']) ? 45 : 40) : 100, 'breakfast-carb');
+  }
+  const breakfastProteinTotal = breakfast.reduce((n, i) => n + i.p, 0);
+  if (breakfastProteinTotal < target.p * 0.22) {
+    const balanceProtein = choose('chickenHam', 'whey', 'eggs', 'skyr');
+    if (balanceProtein && !breakfast.some(item => item.name === FOOD[balanceProtein].name)) {
+      add(breakfast, balanceProtein, proteinAmount(balanceProtein, 'balance'), 'protein-balance');
+    }
+    reasons.push('Une source de protéines compatible complète le petit déjeuner sans bouleverser tes habitudes.');
   }
 
-  const lunchCarb = contains(a.foodHabits, ['pomme de terre', 'patate']) ? 'potato' : 'rice';
+  const lunchProtein = choose('chicken', 'salmon', 'eggs');
+  const dinnerProtein = choose('salmon', 'chicken', 'eggs');
+  const snackProtein = choose('skyr', 'whey', 'cottage', 'eggs', 'chickenHam');
+  const preferredLunchCarb = contains(a.foodHabits, ['pomme de terre', 'patate']) ? 'potato' : 'rice';
+  const lunchCarb = choose(preferredLunchCarb, 'rice', 'potato', 'bread');
+  const dinnerCarb = choose('potato', 'rice', 'bread');
+  const snackFruit = choose('fruit', 'banana', 'compote');
+  const snackCarb = choose('oats', 'bread', 'rice', 'potato');
+  const lunchItems = [];
+  add(lunchItems, lunchProtein, proteinAmount(lunchProtein, 'meal'));
+  add(lunchItems, lunchCarb, lunchCarb === 'potato' ? 300 : 200);
+  add(lunchItems, choose('vegetables'), 250);
+  add(lunchItems, choose('oliveOil'), 10);
+  const snackItems = [];
+  add(snackItems, snackProtein, proteinAmount(snackProtein, 'snack'));
+  add(snackItems, snackFruit, snackFruit === 'compote' ? 150 : 180);
+  add(snackItems, snackCarb, snackCarb === 'oats' ? 25 : 80);
+  const dinnerItems = [];
+  add(dinnerItems, dinnerProtein, proteinAmount(dinnerProtein, 'dinner'));
+  add(dinnerItems, dinnerCarb, dinnerCarb === 'potato' ? 280 : 190);
+  add(dinnerItems, choose('vegetables'), 300);
+  add(dinnerItems, choose('oliveOil'), 5);
   const plan = [
     meal('breakfast', 'Petit déjeuner', '☕', breakfast, reasons.join(' ')),
-    meal('lunch', 'Repas midi', '🍽️', [foodItem('chicken', 160), foodItem(lunchCarb, lunchCarb === 'potato' ? 300 : 200), foodItem('vegetables', 250), foodItem('oliveOil', 10)], 'Repas complet construit autour de tes habitudes.'),
-    meal('snack', 'Goûter', '🍌', [foodItem('skyr', 200), foodItem('fruit', 180), foodItem('oats', 25)], 'Collation simple, rapide et protéinée.'),
-    meal('dinner', 'Repas soir', '🌙', [foodItem('salmon', 140), foodItem('potato', 280), foodItem('vegetables', 300), foodItem('oliveOil', 5)], 'Dîner rassasiant avec protéines, fibres et lipides utiles.'),
+    meal('lunch', 'Repas midi', '🍽️', lunchItems, 'Repas complet construit autour de tes habitudes.'),
+    meal('snack', 'Goûter', '🍌', snackItems, 'Collation simple, rapide et protéinée.'),
+    meal('dinner', 'Repas soir', '🌙', dinnerItems, 'Dîner rassasiant avec protéines, fibres et lipides utiles.'),
   ];
 
-  let totals = sumPlan(plan);
-  const carbDelta = target.g - totals.g;
-  if (Math.abs(carbDelta) > 8) {
-    const rice = plan[1].items.find(i => i.name.includes('Riz'));
-    if (rice) {
-      const nextAmount = Math.max(80, 200 + carbDelta / 0.28);
-      Object.assign(rice, foodItem('rice', nextAmount, rice.id));
-    }
-  }
-  totals = sumPlan(plan);
+  const totals = sumPlan(plan);
   const proteinDelta = target.p - totals.p;
-  if (proteinDelta > 8) plan[2].items.push(foodItem('whey', Math.min(35, proteinDelta / 0.84), 'protein-adjustment'));
-  return normalizePlan(plan, target);
+  if (proteinDelta > 8) {
+    const adjustmentProtein = choose('whey', 'chickenHam', 'eggs', 'skyr', 'cottage');
+    add(plan[2].items, adjustmentProtein, proteinAmount(adjustmentProtein, 'snack'), 'protein-adjustment');
+  }
+  return plan;
 }
 
-function scalePlan(plan, factor, suffix) {
+function scalePlan(plan, factor) {
   return plan.map(mealRow => ({
     ...mealRow,
-    id: `${mealRow.id}-${suffix}`,
     items: mealRow.items.map(item => {
-      if (item.swappable === 'protein' || item.name.includes('Légumes')) return { ...item, id: `${item.id}-${suffix}` };
+      if (item.swappable === 'protein' || item.name.includes('Légumes')) return { ...item };
       const amount = parseFloat(item.qty);
-      if (!Number.isFinite(amount)) return { ...item, id: `${item.id}-${suffix}` };
-      return { ...item, id: `${item.id}-${suffix}`, qty: `${round1(amount * factor)} ${item.qty.replace(/[\d.,\s]/g, '') || 'g'}`, cal: round1(item.cal * factor), p: round1(item.p * factor), g: round1(item.g * factor), l: round1(item.l * factor) };
+      if (!Number.isFinite(amount)) return { ...item };
+      return { ...item, qty: `${round1(amount * factor)} ${item.qty.replace(/[\d.,\s]/g, '') || 'g'}`, cal: round1(item.cal * factor), p: round1(item.p * factor), g: round1(item.g * factor), l: round1(item.l * factor) };
     }),
   }));
 }
 
 export function generateNutritionProfile(answers, userId) {
+  if (answers.healthDataConsent !== true) {
+    throw new Error('Ton consentement est nécessaire pour créer et enregistrer le plan.');
+  }
+  const safetyBlock = getSafetyBlockReason(answers);
+  if (safetyBlock) throw new Error(safetyBlock);
   const target = targetFromAnswers(answers);
-  const standardPlan = buildStandardPlan(answers, target);
+  const standardBasePlan = buildStandardPlan(answers, target);
+  const standardPlan = normalizePlan(standardBasePlan, target);
   const trainingTarget = { ...target, cal: target.cal + 200, g: target.g + 50 };
   const restTarget = { ...target, cal: Math.max(1400, target.cal - 150), g: Math.max(80, target.g - 38) };
   const profileId = `member-${userId}`;
-  const trainingPlan = normalizePlan(scalePlan(standardPlan, 1.08, 'training'), trainingTarget);
-  const restPlan = normalizePlan(scalePlan(standardPlan, 0.94, 'rest'), restTarget);
+  const trainingPlan = normalizePlan(scalePlan(standardBasePlan, 1.08), trainingTarget);
+  const restPlan = normalizePlan(scalePlan(standardBasePlan, 0.94), restTarget);
   const standardActual = { ...target, ...Object.fromEntries(Object.entries(sumPlan(standardPlan)).map(([key, value]) => [key, Math.round(value)])) };
   const trainingActual = { ...trainingTarget, ...Object.fromEntries(Object.entries(sumPlan(trainingPlan)).map(([key, value]) => [key, Math.round(value)])) };
   const restActual = { ...restTarget, ...Object.fromEntries(Object.entries(sumPlan(restPlan)).map(([key, value]) => [key, Math.round(value)])) };
