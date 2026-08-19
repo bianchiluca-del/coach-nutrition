@@ -4,11 +4,14 @@ import { supabase } from '../lib/supabaseClient';
 import { nutritionProfileForSession, profileForSession } from '../lib/cloudSync';
 import Login from './Login';
 import OnboardingFlow from './OnboardingFlow';
+import BetaAccessGate from './BetaAccessGate';
+import { getAccessContext, pendingInvite, redeemBetaInvite } from '../lib/betaAccess';
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
   const [profileId, setProfileId] = useState(null);
   const [nutritionProfile, setNutritionProfile] = useState(null);
+  const [accessContext, setAccessContext] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
@@ -18,6 +21,20 @@ export default function AuthGate({ children }) {
     const applySession = async (nextSession) => {
       setSession(nextSession);
       if (!nextSession) {
+        setProfileId(null);
+        setNutritionProfile(null);
+        setAccessContext(null);
+        return;
+      }
+
+      const savedInvite = pendingInvite();
+      if (savedInvite) {
+        try { await redeemBetaInvite(savedInvite); }
+        catch { /* L'écran d'accès permettra de ressaisir le code si nécessaire. */ }
+      }
+      const nextAccessContext = await getAccessContext();
+      setAccessContext(nextAccessContext);
+      if (!nextAccessContext?.has_access) {
         setProfileId(null);
         setNutritionProfile(null);
         return;
@@ -93,11 +110,15 @@ export default function AuthGate({ children }) {
     return <Login />;
   }
 
+  if (!accessContext?.has_access) {
+    return <BetaAccessGate onGranted={setAccessContext} />;
+  }
+
   if (!profileId && !nutritionProfile) {
     return <OnboardingFlow session={session} onComplete={setNutritionProfile} />;
   }
 
   if (!profileId && nutritionProfile?.onboarding_status !== 'completed') return <OnboardingFlow session={session} onComplete={setNutritionProfile} />;
 
-  return typeof children === 'function' ? children(session, profileId || nutritionProfile.profile_id, nutritionProfile) : children;
+  return typeof children === 'function' ? children(session, profileId || nutritionProfile.profile_id, nutritionProfile, accessContext) : children;
 }
