@@ -76,7 +76,7 @@ export function getWeightTrend(measurements = []) {
 
 export function getAdjustmentRecommendation(goal, measurements = []) {
   const trend = getWeightTrend(measurements);
-  if (!trend.ready) return { ...trend, kcal: 0, message: 'Au moins 6 pesées sont nécessaires avant toute correction.' };
+  if (!trend.ready) return { ...trend, kcal: 0, message: 'Il faut 6 pesées pour former deux moyennes de 3 avant la première suggestion. L’objectif complet reste 9 pesées sur les 3 semaines de calibration.' };
   let kcal = 0;
   if (goal === 'loss') {
     if (trend.percentPerWeek > -0.15) kcal = -100;

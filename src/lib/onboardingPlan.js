@@ -1,3 +1,5 @@
+import { getHealthAdvisory } from './healthContext.js';
+
 const FOOD = {
   eggs: { name: 'Œufs entiers', per: 1, unit: 'pièces', cal: 72, p: 6.3, g: 0.4, l: 4.8 },
   chickenHam: { name: 'Jambon blanc de poulet', per: 100, unit: 'g', cal: 105, p: 20, g: 1.5, l: 2 },
@@ -48,31 +50,7 @@ function forbiddenFoodKeys(answers) {
 }
 
 export function getSafetyBlockReason(answers) {
-  const medicalStatement = normalizeText(answers.medical || '');
-  const medical = normalizeText(`${answers.medical || ''} ${answers.digestion || ''}`);
-  const explicitNoIssue = /^(aucun|aucune|rien|neant|ras|non)$/.test(medicalStatement);
-  const hasMedicalDeclaration = Boolean(medicalStatement && !explicitNoIssue);
-  const highRisk = [
-    'grossesse', 'enceinte', 'allaitement', 'diabete', 'insuline', 'hypoglycemie',
-    'maladie renale', 'insuffisance renale', 'dialyse', 'calcul renaux',
-    'anorexie', 'boulimie', 'hyperphagie', 'trouble alimentaire', 'tca',
-    'cancer', 'chimiotherapie', 'radiotherapie', 'cirrhose', 'insuffisance hepatique',
-    'maladie du foie', 'insuffisance cardiaque', 'cardiopathie', 'infarctus',
-    'crohn', 'rectocolite', 'colite ulcereuse', 'maladie coeliaque',
-    'chirurgie bariatrique', 'bypass', 'sleeve', 'anaphylaxie', 'allergie severe',
-    'hypothyroidie', 'hyperthyroidie', 'maladie de la thyroide', 'sopk',
-    'cortisone', 'corticotherapie', 'anticoagulant', 'epilepsie',
-  ];
-  const birthDate = answers.birthDate ? new Date(answers.birthDate) : null;
-  const age = birthDate && Number.isFinite(birthDate.getTime())
-    ? Math.floor((Date.now() - birthDate.getTime()) / 31557600000)
-    : null;
-  if (age !== null && age < 18) {
-    return 'Un plan pour une personne mineure nécessite une validation individuelle par un professionnel de santé.';
-  }
-  return (hasMedicalDeclaration || highRisk.some(term => medical.includes(term)))
-    ? 'Ta situation nécessite une validation individuelle par un professionnel de santé avant de générer un plan.'
-    : '';
+  return '';
 }
 
 const round1 = value => Math.round(value * 10) / 10;
@@ -309,8 +287,6 @@ export function generateNutritionProfile(answers, userId) {
   if (answers.healthDataConsent !== true) {
     throw new Error('Ton consentement est nécessaire pour créer et enregistrer le plan.');
   }
-  const safetyBlock = getSafetyBlockReason(answers);
-  if (safetyBlock) throw new Error(safetyBlock);
   const target = targetFromAnswers(answers);
   const standardBasePlan = buildStandardPlan(answers, target);
   const standardPlan = normalizePlan(standardBasePlan, target);
@@ -336,6 +312,7 @@ export function generateNutritionProfile(answers, userId) {
       weighInDays: ['lundi', 'mercredi', 'samedi'],
       explanation: 'Trois mesures espacées révèlent la tendance réelle malgré l’eau, le sel, le transit et l’entraînement. Une valeur isolée ne déclenche jamais de correction.',
       target: standardActual,
+      healthAdvisory: getHealthAdvisory(answers),
       phases: [
         { id: 'initial', label: 'Calibration initiale', startWeek: 1, endWeek: 3, weighInDays: ['lundi', 'mercredi', 'samedi'] },
         { id: 'adjustment', label: 'Ajustement progressif', startWeek: 4, endWeek: 8, weighInDays: ['lundi', 'samedi'] },
