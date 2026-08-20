@@ -171,7 +171,7 @@ export default function AccountSettings({ session, profileName, syncState, onSig
       <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
         <div className="mb-2 flex items-center gap-2"><ShieldCheck size={18} className="text-violet-600" /><h3 className="font-bold text-slate-800">Confidentialité des données</h3></div>
         <p className="leading-relaxed">Tes informations servent uniquement à créer ton plan, calculer ton suivi et personnaliser les conseils. Elles ne sont jamais visibles par un autre client. Ton coach attribué peut les consulter uniquement après ton autorisation explicite.</p>
-        <p className="mt-2 text-xs text-slate-500">La base est hébergée en région européenne. L’analyse IA est facultative : elle reçoit uniquement le plan, ses consignes associées et le bilan de la journée lorsque tu la déclenches, jamais ton questionnaire médical ni tes mensurations.</p>
+        <p className="mt-2 text-xs text-slate-500">La base est hébergée en région européenne. L’analyse IA est facultative et ne se déclenche que sur ton action. Si tu l’autorises explicitement, elle reçoit aussi les allergies, exclusions, informations santé/traitements et digestion déclarées pour éviter les conseils inadaptés. Les mensurations ne sont jamais envoyées à l’IA.</p>
         <p className="mt-2 text-xs text-slate-500">Tu peux retirer l’accès coach depuis cette page sans supprimer ton compte. Pour retirer entièrement le consentement au traitement de tes données, tu peux supprimer définitivement ton compte ci-dessous.</p>
       </section>
 
