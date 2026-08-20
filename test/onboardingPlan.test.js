@@ -7,7 +7,8 @@ const answers = overrides => ({
   firstName: 'Test', birthDate: '1990-01-01', sex: 'male', height: 178, weight: 76,
   goal: 'maintenance', activity: 'active', breakfastHabit: '3 œufs, miel, banane',
   foodHabits: 'poulet, riz, saumon', allergies: '', exclusions: '', medical: '',
-  digestion: '', healthDataConsent: true, ...overrides,
+  digestion: '', processAcknowledged: true, healthDataConsent: true,
+  mealCount: '4', trainingDays: '3', steps: '7500', jobActivity: 'mixed', ...overrides,
 });
 
 const allNames = profile => Object.values(profile.plan_modes_json)
@@ -38,6 +39,36 @@ test('le consentement santé est obligatoire', () => {
     () => generateNutritionProfile(answers({ healthDataConsent: false }), '00000000-0000-0000-0000-000000000003'),
     /consentement/,
   );
+});
+
+test('la validation du processus est obligatoire', () => {
+  assert.throws(
+    () => generateNutritionProfile(answers({ processAcknowledged: false }), '00000000-0000-0000-0000-000000000030'),
+    /processus de personnalisation/,
+  );
+});
+
+test('le nombre de repas demandé est respecté dans tous les modes', () => {
+  for (const count of [3, 4, 5]) {
+    const profile = generateNutritionProfile(answers({ mealCount: String(count) }), `00000000-0000-0000-0000-00000000004${count}`);
+    for (const mode of Object.values(profile.plan_modes_json)) assert.equal(mode.plan.length, count);
+  }
+});
+
+test('les pas, le métier et les entraînements personnalisent réellement la cible', () => {
+  const sedentary = generateNutritionProfile(answers({ activity: 'sedentary', jobActivity: 'desk', steps: '2000', trainingDays: '0' }), '00000000-0000-0000-0000-000000000050');
+  const active = generateNutritionProfile(answers({ activity: 'veryActive', jobActivity: 'physical', steps: '15000', trainingDays: '6' }), '00000000-0000-0000-0000-000000000051');
+  assert.ok(active.calibration_json.target.cal >= sedentary.calibration_json.target.cal + 500);
+  assert.notEqual(active.calibration_json.target.activityFactor, sedentary.calibration_json.target.activityFactor);
+});
+
+test('le filtre santé couvre aussi les situations digestives et cardiaques', () => {
+  for (const medical of ['Maladie de Crohn', 'insuffisance cardiaque', 'chirurgie bypass', 'asthme sous traitement']) {
+    assert.throws(
+      () => generateNutritionProfile(answers({ medical }), '00000000-0000-0000-0000-000000000060'),
+      /professionnel de santé/,
+    );
+  }
 });
 
 test('les identifiants repas et aliments restent stables entre les modes', () => {
