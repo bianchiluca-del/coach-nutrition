@@ -23,6 +23,7 @@ test('aucun ajustement n’est proposé sur trop peu de mesures', () => {
   const result = getAdjustmentRecommendation('loss', [{ date: '2026-08-01', poids: 80 }]);
   assert.equal(result.ready, false);
   assert.equal(result.kcal, 0);
+  assert.match(result.message, /deux moyennes de 3/);
 });
 
 test('une tendance insuffisante en perte déclenche seulement un petit palier', () => {

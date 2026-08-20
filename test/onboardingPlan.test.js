@@ -27,11 +27,13 @@ test('les allergènes et exclusions connus ne sont jamais ajoutés', () => {
   assert.doesNotMatch(names, /œuf|oeuf|skyr|whey|cottage|saumon/);
 });
 
-test('une situation médicale à risque bloque la génération automatique', () => {
-  assert.throws(
-    () => generateNutritionProfile(answers({ medical: 'Diabète traité par insuline' }), '00000000-0000-0000-0000-000000000002'),
-    /professionnel de santé/,
+test('une situation médicale déclarée ne bloque jamais la création du plan', () => {
+  const profile = generateNutritionProfile(
+    answers({ medical: 'Diabète traité par insuline' }),
+    '00000000-0000-0000-0000-000000000002',
   );
+  assert.equal(profile.onboarding_status, 'completed');
+  assert.match(profile.calibration_json.healthAdvisory, /ne remplacent pas un médecin/);
 });
 
 test('le consentement santé est obligatoire', () => {
@@ -62,12 +64,11 @@ test('les pas, le métier et les entraînements personnalisent réellement la ci
   assert.notEqual(active.calibration_json.target.activityFactor, sedentary.calibration_json.target.activityFactor);
 });
 
-test('le filtre santé couvre aussi les situations digestives et cardiaques', () => {
+test('les situations digestives et cardiaques créent un avertissement non bloquant', () => {
   for (const medical of ['Maladie de Crohn', 'insuffisance cardiaque', 'chirurgie bypass', 'asthme sous traitement']) {
-    assert.throws(
-      () => generateNutritionProfile(answers({ medical }), '00000000-0000-0000-0000-000000000060'),
-      /professionnel de santé/,
-    );
+    const profile = generateNutritionProfile(answers({ medical }), '00000000-0000-0000-0000-000000000060');
+    assert.equal(profile.onboarding_status, 'completed');
+    assert.match(profile.calibration_json.healthAdvisory, /professionnel de santé/);
   }
 });
 
