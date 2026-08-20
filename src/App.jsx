@@ -24,7 +24,7 @@ import ClientCoachAccess from './components/ClientCoachAccess.jsx';
 import { deleteFoodFavorite, favoriteToEntry, loadFoodFavorites, saveFoodFavorite } from './lib/foodFavorites';
 import { localDateKey } from './lib/date';
 import { transferModeConsumption } from './lib/modeCarryover';
-import { getAdjustmentRecommendation, getProspectPhase, getWeighInReminder } from './lib/prospectJourney';
+import { getProgressReport, getProspectPhase, getWeighInAction, getWeighInReminder } from './lib/prospectJourney';
 import { buildAiHealthContext, getHealthAdvisory, hasRelevantHealthContext } from './lib/healthContext';
 import {
   loadCloudSnapshot,
@@ -2773,15 +2773,32 @@ const MESURE_FIELDS = [
   { key:'cuisseD', label:'Cuisse D', unit:'cm', good:'decrease' },
   { key:'cuisseG', label:'Cuisse G', unit:'cm', good:'decrease' },
 ];
-const MesuresView = ({ profileId, mesuresData, onUpdateMesures }) => {
+const MesuresView = ({ profileId, mesuresData, onUpdateMesures, captureRequest, onMeasurementCaptured, progressReport }) => {
   const entries = [...(mesuresData[profileId]||[])].sort((a,b)=>new Date(a.date)-new Date(b.date));
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ date: localDateKey() });
+  const [formError, setFormError] = useState('');
   const first = entries[0]; const last = entries[entries.length-1];
-  const openAdd = () => { setEditId(null); setForm({ date:localDateKey(), ...Object.fromEntries(MESURE_FIELDS.map(f=>[f.key,''])) }); setShowForm(true); };
-  const openEdit = e => { setEditId(e.id); setForm({...e}); setShowForm(true); };
-  const save = () => { if(!form.date) return; onUpdateMesures(profileId, editId?'edit':'add', {...form, id:editId||`m-${Date.now()}`}); setShowForm(false); };
+  const openAdd = () => { setFormError(''); setEditId(null); setForm({ date:localDateKey(), ...Object.fromEntries(MESURE_FIELDS.map(f=>[f.key,''])) }); setShowForm(true); };
+  const openEdit = e => { setFormError(''); setEditId(e.id); setForm({...e}); setShowForm(true); };
+  useEffect(() => {
+    if (!captureRequest?.id) return;
+    setFormError('');
+    setEditId(null);
+    setForm({ date:captureRequest.dateKey || localDateKey(), ...Object.fromEntries(MESURE_FIELDS.map(f=>[f.key,''])) });
+    setShowForm(true);
+  }, [captureRequest]);
+  const save = () => {
+    if(!form.date) return;
+    if (captureRequest && !editId && (!Number.isFinite(Number(form.poids)) || Number(form.poids) <= 20 || Number(form.poids) >= 350)) {
+      setFormError('Indique un poids valide pour terminer cette pesée.');
+      return;
+    }
+    onUpdateMesures(profileId, editId?'edit':'add', {...form, id:editId||`m-${Date.now()}`});
+    if (captureRequest && !editId) onMeasurementCaptured?.();
+    setShowForm(false);
+  };
   const del = id => { if(window.confirm('Supprimer cette entrée ?')) onUpdateMesures(profileId,'delete',id); };
   const fmtDate = d => { try { return new Date(d+'T12:00:00').toLocaleDateString('fr-CH',{day:'2-digit',month:'2-digit',year:'numeric'}); } catch { return d; } };
   return (
@@ -2790,6 +2807,35 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures }) => {
         <h2 className="text-lg font-bold text-slate-800">Mensurations</h2>
         {first&&last&&entries.length>1&&<p className="text-[11px] text-slate-400">Depuis le {fmtDate(first.date)}</p>}
       </div>
+      {progressReport && !progressReport.available && (
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-indigo-950">
+          <p className="text-sm font-black">📊 Rapport de progression en préparation</p>
+          <p className="mt-1 text-xs leading-relaxed">Le rapport complet sera disponible au début de la phase 3, après les 8 semaines d’observation et au moins 9 pesées réparties sur 5 semaines.</p>
+          <p className="mt-2 text-xs font-bold text-indigo-700">{progressReport.measurementCount}/9 pesées exploitables · {progressReport.spanDays}/35 jours couverts</p>
+        </div>
+      )}
+      {progressReport?.available && (
+        <div className="rounded-3xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-violet-50 p-4 text-slate-800 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div><p className="text-sm font-black text-indigo-950">📊 Rapport de progression</p><p className="mt-1 text-xs leading-relaxed text-indigo-900">{progressReport.summary}</p></div>
+            <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[9px] font-black text-indigo-700">Analyse automatique</span>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-white p-2 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Départ</p><p className="text-sm font-black text-slate-800">{progressReport.firstAverage} kg</p></div>
+            <div className="rounded-xl bg-white p-2 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">Actuel</p><p className="text-sm font-black text-slate-800">{progressReport.lastAverage} kg</p></div>
+            <div className="rounded-xl bg-white p-2 text-center"><p className="text-[9px] font-bold uppercase text-slate-400">/ semaine</p><p className="text-sm font-black text-slate-800">{progressReport.percentPerWeek > 0 ? '+' : ''}{progressReport.percentPerWeek}%</p></div>
+          </div>
+          <div className="mt-3 space-y-2">
+            {progressReport.findings.map((finding, index) => (
+              <div key={`${finding.title}-${index}`} className={`rounded-xl border p-3 ${finding.level === 'success' ? 'border-emerald-200 bg-emerald-50' : finding.level === 'warning' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'}`}>
+                <p className="text-xs font-black">{finding.level === 'success' ? '✓' : finding.level === 'warning' ? '⚠️' : 'ℹ️'} {finding.title}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{finding.text}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[10px] leading-relaxed text-slate-500">Ce rapport repère des tendances et des pistes à vérifier à partir des données saisies. Il ne pose pas de diagnostic et n’affirme jamais une cause médicale.</p>
+        </div>
+      )}
       {first&&last&&entries.length>1&&(
         <div className="grid grid-cols-2 gap-3">
           {[{key:'poids',label:'Poids',bg:'from-blue-50 to-indigo-50',border:'border-blue-100',c:'text-blue-700',unit:'kg'},{key:'poitrine',label:'Poitrine',bg:'from-purple-50 to-pink-50',border:'border-purple-100',c:'text-purple-700',unit:'cm'},{key:'nombril',label:'Nombril',bg:'from-emerald-50 to-teal-50',border:'border-emerald-100',c:'text-emerald-700',unit:'cm'},{key:'fesses',label:'Fesses',bg:'from-amber-50 to-orange-50',border:'border-amber-100',c:'text-amber-700',unit:'cm'}].map(({key,label,bg,border,c,unit}) => {
@@ -2850,10 +2896,11 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures }) => {
                 {MESURE_FIELDS.map(field=>(
                   <div key={field.key}>
                     <label className="text-[11px] font-medium text-slate-500 block mb-1">{field.label} ({field.unit})</label>
-                    <input type="text" inputMode="decimal" value={form[field.key]||''} onFocus={e=>e.target.select()} onChange={e=>setForm(f=>({...f,[field.key]:e.target.value}))} placeholder={field.key==='poids'?'70':'90'} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-300 text-slate-800"/>
+                    <input type="text" inputMode="decimal" autoFocus={field.key==='poids' && !editId} value={form[field.key]||''} onFocus={e=>e.target.select()} onChange={e=>{ setFormError(''); setForm(f=>({...f,[field.key]:e.target.value})); }} placeholder={field.key==='poids'?'70':'90'} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-300 text-base text-slate-800"/>
                   </div>
                 ))}
               </div>
+              {formError && <p className="rounded-xl bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{formError}</p>}
               <button onClick={save} className="w-full py-3.5 rounded-xl bg-violet-500 text-white font-bold hover:bg-violet-600 transition-colors">{editId?'Enregistrer les modifications':'Ajouter le bilan'}</button>
             </div>
           </div>
@@ -2951,6 +2998,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
   const [scannerTarget, setScannerTarget] = useState(null); // {mealId, mealName, stream}
   const [suiviData, setSuiviData] = useState({});
   const [mesuresData, setMesuresData] = useState({});
+  const [measurementCaptureRequest, setMeasurementCaptureRequest] = useState(null);
   // Map du dernier mode utilisé par profil pour préserver la sélection au switch profil
   const [lastModeByProfile, setLastModeByProfile] = useState(DEFAULT_MODE_BY_PROFILE);
   const [usersData, setUsersData] = useState(() => {
@@ -3002,9 +3050,16 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     updatedAt: nutritionProfile.updated_at,
   } : null;
   const prospectPhase = calibrationForJourney ? getProspectPhase(calibrationForJourney, currentTime) : null;
-  const weightAdjustment = prospectPhase?.id === 'adjustment'
-    ? getAdjustmentRecommendation(nutritionProfile?.questionnaire_json?.goal, mesuresData[currentProfile] || [])
+  const weighInAction = calibrationForJourney
+    ? getWeighInAction(calibrationForJourney, mesuresData[currentProfile] || [], currentTime)
     : null;
+  const progressReport = calibrationForJourney ? getProgressReport({
+    calibration: calibrationForJourney,
+    goal: nutritionProfile?.questionnaire_json?.goal,
+    measurements: mesuresData[currentProfile] || [],
+    dailyEntries: suiviData[currentProfile] || {},
+    now: currentTime,
+  }) : null;
   const weighInReminder = calibrationForJourney ? getWeighInReminder(calibrationForJourney, currentTime) : null;
   const reminderAcknowledged = Boolean(weighInReminder
     && suiviData[currentProfile]?.[today()]?.weighInReminderDate === weighInReminder.dateKey);
@@ -4375,13 +4430,25 @@ RÈGLES
           </div>
         )}
 
-        {prospectPhase && (
-          <div className="mb-4 mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-violet-950">
+        {weighInAction && (
+          <button
+            type="button"
+            onClick={() => {
+              setMeasurementCaptureRequest({ id: Date.now(), dateKey: weighInAction.dateKey });
+              setActiveSection('mesures');
+            }}
+            className="mb-4 mt-3 w-full rounded-2xl border border-violet-300 bg-violet-50 p-4 text-left text-violet-950 shadow-sm transition active:scale-[0.99] active:bg-violet-100"
+            aria-label={`Ajouter la pesée du ${weighInAction.dayLabel}`}
+          >
             <div className="flex items-center justify-between gap-3">
-              <div><p className="text-sm font-black">⚖️ Phase {prospectPhase.id === 'initial' ? '1' : prospectPhase.id === 'adjustment' ? '2' : '3'} · {prospectPhase.label}</p><p className="mt-1 text-xs leading-relaxed">{prospectPhase.description} Pesées : {prospectPhase.weighInLabels.join(', ')}.</p>{weightAdjustment && <p className="mt-2 rounded-xl bg-white/80 px-3 py-2 text-xs font-semibold text-violet-800">Tendance : {weightAdjustment.message}</p>}</div>
-              <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[10px] font-black text-violet-700">Semaine {prospectPhase.week}</span>
+              <div>
+                <p className="text-sm font-black">⚖️ Pesée requise · Phase {weighInAction.phase.id === 'initial' ? '1' : weighInAction.phase.id === 'adjustment' ? '2' : '3'}</p>
+                <p className="mt-1 text-xs leading-relaxed">Aujourd’hui {weighInAction.dayLabel}, ajoute ton poids du matin à jeun. La carte disparaîtra dès l’enregistrement.</p>
+                <span className="mt-2 inline-flex min-h-10 items-center rounded-xl bg-violet-600 px-3 text-xs font-black text-white">Ajouter mon poids →</span>
+              </div>
+              <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[10px] font-black text-violet-700">Semaine {weighInAction.phase.week}</span>
             </div>
-          </div>
+          </button>
         )}
         {healthAdvisory && (
           <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900"><strong>Information santé :</strong> {healthAdvisory}</div>
@@ -4784,7 +4851,7 @@ RÈGLES
         <div className="pt-2"><SuiviView profileId={currentProfile} suiviData={suiviData} onUpdateSuivi={updateSuivi} /></div>
       )}
       {activeSection === 'mesures' && (
-        <div className="pt-2"><MesuresView profileId={currentProfile} mesuresData={mesuresData} onUpdateMesures={updateMesures} /></div>
+        <div className="pt-2"><MesuresView profileId={currentProfile} mesuresData={mesuresData} onUpdateMesures={updateMesures} captureRequest={measurementCaptureRequest} onMeasurementCaptured={() => setMeasurementCaptureRequest(null)} progressReport={progressReport} /></div>
       )}
       {activeSection === 'settings' && (
         <AccountSettings session={session} profileName={BASE_PROFILE[accountProfileId]?.name} syncState={syncState} onSignOut={handleSignOut} signingOut={signingOut} isCoach={accessContext?.is_coach} onOpenCoach={() => setActiveSection('coach')} />
