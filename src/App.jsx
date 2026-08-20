@@ -24,6 +24,7 @@ import ClientCoachAccess from './components/ClientCoachAccess.jsx';
 import { deleteFoodFavorite, favoriteToEntry, loadFoodFavorites, saveFoodFavorite } from './lib/foodFavorites';
 import { localDateKey } from './lib/date';
 import { transferModeConsumption } from './lib/modeCarryover';
+import { getAdjustmentRecommendation, getProspectPhase, getWeighInReminder } from './lib/prospectJourney';
 import {
   loadCloudSnapshot,
   saveDailyStates,
@@ -2989,6 +2990,17 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
   const collapsed = userData.collapsed;
   const changesSinceAnalysis = userData.changesSinceAnalysis;
   const realQty = userData.realQty || {};
+  const calibrationForJourney = nutritionProfile ? {
+    ...(nutritionProfile.calibration_json || {}),
+    updatedAt: nutritionProfile.updated_at,
+  } : null;
+  const prospectPhase = calibrationForJourney ? getProspectPhase(calibrationForJourney, currentTime) : null;
+  const weightAdjustment = prospectPhase?.id === 'adjustment'
+    ? getAdjustmentRecommendation(nutritionProfile?.questionnaire_json?.goal, mesuresData[currentProfile] || [])
+    : null;
+  const weighInReminder = calibrationForJourney ? getWeighInReminder(calibrationForJourney, currentTime) : null;
+  const reminderAcknowledged = Boolean(weighInReminder
+    && suiviData[currentProfile]?.[today()]?.weighInReminderDate === weighInReminder.dateKey);
 
   const updateUserData = (userId, updates) => {
     setUsersData(prev => ({
@@ -4327,11 +4339,11 @@ RÈGLES
           </div>
         )}
 
-        {nutritionProfile?.calibration_json?.phase === 'initial' && (
+        {prospectPhase && (
           <div className="mb-4 mt-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-violet-950">
             <div className="flex items-center justify-between gap-3">
-              <div><p className="text-sm font-black">⚖️ Calibration en cours · 3 semaines</p><p className="mt-1 text-xs leading-relaxed">Pesées lundi, mercredi et samedi. Nous suivons la moyenne : jamais une valeur isolée.</p></div>
-              <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[10px] font-black text-violet-700">Plan déjà actif</span>
+              <div><p className="text-sm font-black">⚖️ Phase {prospectPhase.id === 'initial' ? '1' : prospectPhase.id === 'adjustment' ? '2' : '3'} · {prospectPhase.label}</p><p className="mt-1 text-xs leading-relaxed">{prospectPhase.description} Pesées : {prospectPhase.weighInLabels.join(', ')}.</p>{weightAdjustment && <p className="mt-2 rounded-xl bg-white/80 px-3 py-2 text-xs font-semibold text-violet-800">Tendance : {weightAdjustment.message}</p>}</div>
+              <span className="shrink-0 rounded-full bg-white px-3 py-1.5 text-[10px] font-black text-violet-700">Semaine {prospectPhase.week}</span>
             </div>
           </div>
         )}
@@ -4752,6 +4764,18 @@ RÈGLES
           }}
           onClose={() => setScannerTarget(null)}
         />
+      )}
+      {weighInReminder && cloudReady && !reminderAcknowledged && (
+        <div className="fixed inset-0 z-[90] flex items-end justify-center bg-slate-950/55 p-3 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="weigh-in-reminder-title">
+          <div className="w-full max-w-md rounded-3xl border border-violet-100 bg-white p-5 shadow-2xl">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-100 text-2xl">⚖️</div>
+            <p className="mt-4 text-xs font-black uppercase tracking-[.18em] text-violet-600">Rappel pour demain</p>
+            <h2 id="weigh-in-reminder-title" className="mt-1 text-xl font-black text-slate-950">Demain {weighInReminder.dayLabel}, pesée de calibration</h2>
+            <p className="mt-2 text-sm leading-relaxed text-slate-600">Au réveil, va aux toilettes puis pèse-toi <strong>à jeun, avant de boire ou manger</strong>, avec la même balance au même endroit, sur un sol dur et avec une tenue comparable.</p>
+            <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-xs leading-relaxed text-slate-600"><strong>Important :</strong> note simplement le résultat dans “Mesures”. Une valeur isolée ne change jamais ton plan ; seule la tendance des moyennes compte.</div>
+            <button type="button" onClick={() => updateSuivi(currentProfile, today(), { ...(suiviData[currentProfile]?.[today()] || {}), weighInReminderDate: weighInReminder.dateKey })} className="mt-5 min-h-12 w-full rounded-2xl bg-violet-600 px-5 font-black text-white shadow-lg shadow-violet-200 active:bg-violet-700">J’ai compris, je le ferai demain</button>
+          </div>
+        </div>
       )}
       <BottomNav active={activeSection} onChange={setActiveSection} />
       {showAdmin && (
