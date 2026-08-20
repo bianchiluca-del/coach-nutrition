@@ -48,13 +48,29 @@ function forbiddenFoodKeys(answers) {
 }
 
 export function getSafetyBlockReason(answers) {
+  const medicalStatement = normalizeText(answers.medical || '');
   const medical = normalizeText(`${answers.medical || ''} ${answers.digestion || ''}`);
+  const explicitNoIssue = /^(aucun|aucune|rien|neant|ras|non)$/.test(medicalStatement);
+  const hasMedicalDeclaration = Boolean(medicalStatement && !explicitNoIssue);
   const highRisk = [
-    'grossesse', 'enceinte', 'allaitement', 'diabete', 'insuline', 'maladie renale',
-    'insuffisance renale', 'dialyse', 'anorexie', 'boulimie', 'trouble alimentaire',
-    'tca', 'cancer', 'chimiotherapie',
+    'grossesse', 'enceinte', 'allaitement', 'diabete', 'insuline', 'hypoglycemie',
+    'maladie renale', 'insuffisance renale', 'dialyse', 'calcul renaux',
+    'anorexie', 'boulimie', 'hyperphagie', 'trouble alimentaire', 'tca',
+    'cancer', 'chimiotherapie', 'radiotherapie', 'cirrhose', 'insuffisance hepatique',
+    'maladie du foie', 'insuffisance cardiaque', 'cardiopathie', 'infarctus',
+    'crohn', 'rectocolite', 'colite ulcereuse', 'maladie coeliaque',
+    'chirurgie bariatrique', 'bypass', 'sleeve', 'anaphylaxie', 'allergie severe',
+    'hypothyroidie', 'hyperthyroidie', 'maladie de la thyroide', 'sopk',
+    'cortisone', 'corticotherapie', 'anticoagulant', 'epilepsie',
   ];
-  return highRisk.some(term => medical.includes(term))
+  const birthDate = answers.birthDate ? new Date(answers.birthDate) : null;
+  const age = birthDate && Number.isFinite(birthDate.getTime())
+    ? Math.floor((Date.now() - birthDate.getTime()) / 31557600000)
+    : null;
+  if (age !== null && age < 18) {
+    return 'Un plan pour une personne mineure nécessite une validation individuelle par un professionnel de santé.';
+  }
+  return (hasMedicalDeclaration || highRisk.some(term => medical.includes(term)))
     ? 'Ta situation nécessite une validation individuelle par un professionnel de santé avant de générer un plan.'
     : '';
 }
@@ -88,15 +104,33 @@ function targetFromAnswers(a) {
   const age = ageFromBirthDate(a.birthDate);
   const sexOffset = a.sex === 'female' ? -161 : 5;
   const bmr = 10 * weight + 6.25 * height - 5 * age + sexOffset;
-  const factors = { sedentary: 1.25, light: 1.4, active: 1.58, veryActive: 1.75 };
-  let calories = bmr * (factors[a.activity] || 1.4);
+  const activityFactors = { sedentary: 1.22, light: 1.34, active: 1.48, veryActive: 1.62 };
+  const jobAdjustments = { desk: -0.04, mixed: 0, standing: 0.07, physical: 0.15, night: 0.02 };
+  const steps = Math.max(0, Number(a.steps) || 0);
+  const stepAdjustment = steps >= 14000 ? 0.18
+    : steps >= 11000 ? 0.13
+      : steps >= 8000 ? 0.08
+        : steps >= 5000 ? 0.03
+          : steps > 0 && steps < 3000 ? -0.03 : 0;
+  const trainingDays = Math.min(7, Math.max(0, Number(a.trainingDays) || 0));
+  const trainingAdjustment = trainingDays * 0.025;
+  const activityFactor = Math.min(1.95, Math.max(1.15,
+    (activityFactors[a.activity] || 1.34)
+      + (jobAdjustments[a.jobActivity] || 0)
+      + stepAdjustment
+      + trainingAdjustment,
+  ));
+  let calories = bmr * activityFactor;
   if (a.goal === 'loss') calories -= 300;
   if (a.goal === 'gain') calories += 250;
   calories = Math.round(Math.max(bmr * 1.08, calories) / 25) * 25;
   const protein = Math.round(weight * (a.goal === 'gain' ? 1.9 : 1.8));
   const fat = Math.round(weight * 0.8);
   const carbs = Math.max(80, Math.round((calories - protein * 4 - fat * 9) / 4));
-  return { cal: calories, p: protein, g: carbs, l: fat, bmr: Math.round(bmr) };
+  return {
+    cal: calories, p: protein, g: carbs, l: fat, bmr: Math.round(bmr),
+    activityFactor: round1(activityFactor),
+  };
 }
 
 function contains(text, words) {
@@ -211,7 +245,7 @@ function buildStandardPlan(a, target) {
   add(dinnerItems, dinnerCarb, dinnerCarb === 'potato' ? 280 : 190);
   add(dinnerItems, choose('vegetables'), 300);
   add(dinnerItems, choose('oliveOil'), 5);
-  const plan = [
+  let plan = [
     meal('breakfast', 'Petit déjeuner', '☕', breakfast, reasons.join(' ')),
     meal('lunch', 'Repas midi', '🍽️', lunchItems, 'Repas complet construit autour de tes habitudes.'),
     meal('snack', 'Goûter', '🍌', snackItems, 'Collation simple, rapide et protéinée.'),
@@ -223,6 +257,35 @@ function buildStandardPlan(a, target) {
   if (proteinDelta > 8) {
     const adjustmentProtein = choose('whey', 'chickenHam', 'eggs', 'skyr', 'cottage');
     add(plan[2].items, adjustmentProtein, proteinAmount(adjustmentProtein, 'snack'), 'protein-adjustment');
+  }
+  const requestedMeals = Math.min(5, Math.max(3, Number(a.mealCount) || 4));
+  if (requestedMeals === 3) {
+    const snack = plan.find(row => row.id === 'snack');
+    const breakfastRow = plan.find(row => row.id === 'breakfast');
+    const dinnerRow = plan.find(row => row.id === 'dinner');
+    snack?.items.forEach((item, index) => {
+      (index % 2 === 0 ? breakfastRow : dinnerRow)?.items.push({ ...item, id: `merged-${item.id}` });
+    });
+    plan = plan.filter(row => row.id !== 'snack');
+  }
+  if (requestedMeals === 5) {
+    const breakfastRow = plan.find(row => row.id === 'breakfast');
+    const snack = plan.find(row => row.id === 'snack');
+    const morningItems = [];
+    if (breakfastRow?.items.length > 2) {
+      morningItems.push({ ...breakfastRow.items.splice(1, 1)[0], id: 'morning-snack-fruit' });
+    }
+    if (snack?.items.length > 1) {
+      morningItems.push({ ...snack.items.shift(), id: 'morning-snack-protein' });
+    }
+    if (!morningItems.length && snack?.items.length) {
+      morningItems.push({ ...snack.items.shift(), id: 'morning-snack-item' });
+    }
+    const snackIndex = plan.findIndex(row => row.id === 'snack');
+    plan.splice(Math.max(1, snackIndex), 0,
+      meal('morning-snack', 'Collation matin', '🍏', morningItems, 'Une prise légère répartit l’énergie selon ton rythme demandé.'),
+    );
+    if (snack) snack.name = 'Goûter';
   }
   return plan;
 }
@@ -240,6 +303,9 @@ function scalePlan(plan, factor) {
 }
 
 export function generateNutritionProfile(answers, userId) {
+  if (answers.processAcknowledged !== true) {
+    throw new Error('Tu dois d’abord comprendre et valider le processus de personnalisation.');
+  }
   if (answers.healthDataConsent !== true) {
     throw new Error('Ton consentement est nécessaire pour créer et enregistrer le plan.');
   }
@@ -263,9 +329,25 @@ export function generateNutritionProfile(answers, userId) {
     questionnaire_json: answers,
     onboarding_status: 'completed',
     calibration_json: {
-      phase: 'initial', durationWeeks: 3, weighInDays: ['lundi', 'mercredi', 'samedi'],
+      version: 2,
+      phase: 'initial',
+      startedAt: new Date().toISOString(),
+      durationWeeks: 3,
+      weighInDays: ['lundi', 'mercredi', 'samedi'],
       explanation: 'Trois mesures espacées révèlent la tendance réelle malgré l’eau, le sel, le transit et l’entraînement. Une valeur isolée ne déclenche jamais de correction.',
       target: standardActual,
+      phases: [
+        { id: 'initial', label: 'Calibration initiale', startWeek: 1, endWeek: 3, weighInDays: ['lundi', 'mercredi', 'samedi'] },
+        { id: 'adjustment', label: 'Ajustement progressif', startWeek: 4, endWeek: 8, weighInDays: ['lundi', 'samedi'] },
+        { id: 'stabilization', label: 'Stabilisation et autonomie', startWeek: 9, weighInDays: ['lundi', 'samedi'] },
+      ],
+      adjustmentPolicy: {
+        minimumMeasurements: 6,
+        compareWeeklyAverages: true,
+        maximumWeeklyChangeKcal: 100,
+        maximumTotalChangeKcal: 200,
+        coachReviewRecommended: true,
+      },
     },
     plan_modes_json: {
       standard: { id: 'standard', label: 'Standard', emoji: '💼', desc: 'Journée habituelle', target: standardActual, plan: standardPlan },
