@@ -38,6 +38,28 @@ const FOOD_ALIASES = {
   cottage: ['cottage', 'lait', 'lactose', 'produit laitier'],
 };
 
+// Chaque aliment généré doit offrir le même sélecteur de remplacement que dans
+// le compte de référence. La catégorie pilote les récurrents et la recherche
+// dans toute la base alimentaire de l'interface.
+const FOOD_SWAP_CATEGORIES = {
+  eggs: 'protein',
+  chickenHam: 'protein',
+  banana: 'fruits',
+  compote: 'fruits',
+  oats: 'feculents',
+  skyr: 'fromages',
+  chicken: 'protein',
+  rice: 'feculents',
+  potato: 'feculents',
+  vegetables: 'legumes_crudites',
+  oliveOil: 'matieres_grasses',
+  fruit: 'fruits',
+  whey: 'protein',
+  salmon: 'protein',
+  bread: 'feculents',
+  cottage: 'fromages',
+};
+
 const normalizeText = value => String(value || '').toLowerCase().normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').replace(/œ/g, 'oe').replace(/[^a-z0-9]+/g, ' ').trim();
 
@@ -65,7 +87,54 @@ function foodItem(key, amount, id) {
     qty: `${round1(amount)} ${food.unit}`,
     cal: round1(food.cal * ratio), p: round1(food.p * ratio),
     g: round1(food.g * ratio), l: round1(food.l * ratio),
-    swappable: ['chicken', 'salmon', 'chickenHam', 'whey', 'skyr', 'cottage', 'eggs'].includes(key) ? 'protein' : undefined,
+    swappable: FOOD_SWAP_CATEGORIES[key],
+  };
+}
+
+const MODE_EXPERIENCE = {
+  standard: { label: 'Standard', emoji: '💼', desc: 'Journée habituelle' },
+  training: { label: 'Hard', emoji: '🔥', desc: 'Journée avec entraînement' },
+  hard: { label: 'Hard', emoji: '🔥', desc: 'Journée avec entraînement' },
+  rest: { label: 'Déficit', emoji: '📉', desc: 'Journée à apport réduit' },
+  deficit: { label: 'Déficit', emoji: '📉', desc: 'Journée à apport réduit' },
+};
+
+const CATEGORY_BY_FOOD_NAME = Object.fromEntries(
+  Object.entries(FOOD_SWAP_CATEGORIES).map(([key, category]) => [normalizeText(FOOD[key].name), category]),
+);
+
+/**
+ * Met à niveau un profil déjà créé sans toucher à ses quantités personnalisées.
+ * Cela permet aux premiers bêta-testeurs de recevoir les mêmes outils que Luca
+ * dès leur prochaine connexion, y compris le changement de tous les aliments.
+ */
+export function upgradeNutritionProfileExperience(profile) {
+  if (!profile?.plan_modes_json) return profile;
+  const planModes = Object.fromEntries(Object.entries(profile.plan_modes_json).map(([key, mode]) => {
+    const experience = MODE_EXPERIENCE[mode?.id] || MODE_EXPERIENCE[key] || {};
+    return [key, {
+      ...mode,
+      ...experience,
+      plan: (mode?.plan || []).map(mealRow => ({
+        ...mealRow,
+        color: mealRow.color || 'from-violet-50 to-indigo-50',
+        border: mealRow.border || 'border-violet-200',
+        items: (mealRow.items || []).map(item => ({
+          ...item,
+          swappable: item.swappable || CATEGORY_BY_FOOD_NAME[normalizeText(item.name)],
+        })),
+      })),
+    }];
+  }));
+  return {
+    ...profile,
+    calibration_json: {
+      ...(profile.calibration_json || {}),
+      version: Math.max(3, Number(profile.calibration_json?.version || 0)),
+      experienceVersion: 1,
+      defaultMode: profile.calibration_json?.defaultMode || 'standard',
+    },
+    plan_modes_json: planModes,
   };
 }
 
@@ -290,22 +359,24 @@ export function generateNutritionProfile(answers, userId) {
   const target = targetFromAnswers(answers);
   const standardBasePlan = buildStandardPlan(answers, target);
   const standardPlan = normalizePlan(standardBasePlan, target);
-  const trainingTarget = { ...target, cal: target.cal + 200, g: target.g + 50 };
-  const restTarget = { ...target, cal: Math.max(1400, target.cal - 150), g: Math.max(80, target.g - 38) };
+  const hardTarget = { ...target, cal: target.cal + 200, g: target.g + 50 };
+  const deficitTarget = { ...target, cal: Math.max(1400, target.cal - 150), g: Math.max(80, target.g - 38) };
   const profileId = `member-${userId}`;
-  const trainingPlan = normalizePlan(scalePlan(standardBasePlan, 1.08), trainingTarget);
-  const restPlan = normalizePlan(scalePlan(standardBasePlan, 0.94), restTarget);
+  const hardPlan = normalizePlan(scalePlan(standardBasePlan, 1.08), hardTarget);
+  const deficitPlan = normalizePlan(scalePlan(standardBasePlan, 0.94), deficitTarget);
   const standardActual = { ...target, ...Object.fromEntries(Object.entries(sumPlan(standardPlan)).map(([key, value]) => [key, Math.round(value)])) };
-  const trainingActual = { ...trainingTarget, ...Object.fromEntries(Object.entries(sumPlan(trainingPlan)).map(([key, value]) => [key, Math.round(value)])) };
-  const restActual = { ...restTarget, ...Object.fromEntries(Object.entries(sumPlan(restPlan)).map(([key, value]) => [key, Math.round(value)])) };
-  return {
+  const hardActual = { ...hardTarget, ...Object.fromEntries(Object.entries(sumPlan(hardPlan)).map(([key, value]) => [key, Math.round(value)])) };
+  const deficitActual = { ...deficitTarget, ...Object.fromEntries(Object.entries(sumPlan(deficitPlan)).map(([key, value]) => [key, Math.round(value)])) };
+  return upgradeNutritionProfileExperience({
     user_id: userId,
     profile_id: profileId,
     display_name: answers.firstName.trim(),
     questionnaire_json: answers,
     onboarding_status: 'completed',
     calibration_json: {
-      version: 2,
+      version: 3,
+      experienceVersion: 1,
+      defaultMode: 'standard',
       phase: 'initial',
       startedAt: new Date().toISOString(),
       durationWeeks: 3,
@@ -328,8 +399,8 @@ export function generateNutritionProfile(answers, userId) {
     },
     plan_modes_json: {
       standard: { id: 'standard', label: 'Standard', emoji: '💼', desc: 'Journée habituelle', target: standardActual, plan: standardPlan },
-      training: { id: 'training', label: 'Training', emoji: '🔥', desc: 'Journée avec entraînement', target: trainingActual, plan: trainingPlan },
-      rest: { id: 'rest', label: 'Repos', emoji: '🌿', desc: 'Journée moins active', target: restActual, plan: restPlan },
+      hard: { id: 'hard', label: 'Hard', emoji: '🔥', desc: 'Journée avec entraînement', target: hardActual, plan: hardPlan },
+      deficit: { id: 'deficit', label: 'Déficit', emoji: '📉', desc: 'Journée à apport réduit', target: deficitActual, plan: deficitPlan },
     },
-  };
+  });
 }
