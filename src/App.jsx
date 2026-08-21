@@ -3010,7 +3010,7 @@ const storage = window.storage || {
 
 // ===== APP =====
 
-export default function App({ session, accountProfileId, nutritionProfile, accessContext }) {
+export default function App({ session, accountProfileId, nutritionProfile, accessContext, previewMode = false, onExitPreview }) {
   registerNutritionProfile(nutritionProfile);
   const allowedUserIds = Object.keys(USERS).filter(uid => USERS[uid].profileId === accountProfileId);
   const accountDefaultUserId = `${accountProfileId}-${DEFAULT_MODE_BY_PROFILE[accountProfileId]}`;
@@ -3030,9 +3030,9 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     }
     return out;
   });
-  const [storageReady, setStorageReady] = useState(false);
-  const [cloudReady, setCloudReady] = useState(false);
-  const [syncState, setSyncState] = useState('loading');
+  const [storageReady, setStorageReady] = useState(previewMode);
+  const [cloudReady, setCloudReady] = useState(previewMode);
+  const [syncState, setSyncState] = useState(previewMode ? 'preview' : 'loading');
   const cloudApplyingRef = useRef(false);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [insightLoading, setInsightLoading] = useState(false);
@@ -3097,6 +3097,10 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
   };
 
   const handleSignOut = async () => {
+    if (previewMode) {
+      onExitPreview?.();
+      return;
+    }
     try {
       setSigningOut(true);
       const { error } = await supabase.auth.signOut();
@@ -3192,6 +3196,11 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
 
   const handleSaveFavorite = async (entry) => {
     try {
+      if (previewMode) {
+        const saved = { ...entry, id: `preview-favorite-${Date.now()}` };
+        setFoodFavorites(previous => [saved, ...previous.filter(item => item.name !== saved.name)]);
+        return;
+      }
       const saved = await saveFoodFavorite(session.user.id, entry);
       setFoodFavorites(previous => [saved, ...previous.filter(item => item.id !== saved.id && item.name !== saved.name)]);
     } catch (error) {
@@ -3201,6 +3210,10 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
 
   const handleDeleteFavorite = async (favoriteId) => {
     try {
+      if (previewMode) {
+        setFoodFavorites(previous => previous.filter(item => item.id !== favoriteId));
+        return;
+      }
       await deleteFoodFavorite(session.user.id, favoriteId);
       setFoodFavorites(previous => previous.filter(item => item.id !== favoriteId));
     } catch (error) {
@@ -3213,6 +3226,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     const tick = async () => {
       const now = new Date();
       setCurrentTime(now);
+      if (previewMode) return;
       try {
         const dateRes = await storage.get('current-date');
         if (dateRes?.value && dateRes.value !== today()) await resetAllUsers(true);
@@ -3221,10 +3235,22 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     const interval = setInterval(tick, 30000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [previewMode]);
 
   // Load initial
   useEffect(() => {
+    if (previewMode) {
+      const loaded = {};
+      for (const uid of allowedUserIds) {
+        loaded[uid] = { plan: deepClone(USERS[uid].plan), status: {}, insight: null, collapsed: {}, changesSinceAnalysis: 0, realQty: {} };
+      }
+      setUsersData(loaded);
+      setCurrentUserId(accountDefaultUserId);
+      setStorageReady(true);
+      setCloudReady(true);
+      setSyncState('preview');
+      return;
+    }
     (async () => {
       try {
         const dateRes = await storage.get('current-date');
@@ -3285,13 +3311,13 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
       } catch (error) { reportAppError(error, { area: 'storage', operation: 'initial_load' }); }
       finally { setStorageReady(true); }
     })();
-  }, [accountDefaultUserId, accountProfileId]);
+  }, [accountDefaultUserId, accountProfileId, previewMode]);
 
   // Persist
-  useEffect(() => { if (storageReady) storage.set('current-user', currentUserId).catch(() => {}); }, [currentUserId, storageReady]);
-  useEffect(() => { if (storageReady) storage.set('last-mode-by-profile', JSON.stringify(lastModeByProfile)).catch(() => {}); }, [lastModeByProfile, storageReady]);
+  useEffect(() => { if (storageReady && !previewMode) storage.set('current-user', currentUserId).catch(() => {}); }, [currentUserId, storageReady, previewMode]);
+  useEffect(() => { if (storageReady && !previewMode) storage.set('last-mode-by-profile', JSON.stringify(lastModeByProfile)).catch(() => {}); }, [lastModeByProfile, storageReady, previewMode]);
   useEffect(() => {
-    if (!storageReady) return;
+    if (!storageReady || previewMode) return;
     for (const uid of allowedUserIds) {
       if (!usersData[uid]) continue;
       storage.set(`plan-${uid}`, JSON.stringify(usersData[uid].plan)).catch(() => {});
@@ -3301,7 +3327,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
         storage.set(`insight-${uid}`, JSON.stringify(usersData[uid].insight)).catch(() => {});
       }
     }
-  }, [usersData, storageReady]);
+  }, [usersData, storageReady, previewMode]);
 
   // Charge d'abord Supabase. S'il n'existe encore aucune ligne distante,
   // l'état local déjà présent sera envoyé par les effets de synchronisation.
@@ -3655,6 +3681,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     setUsersData(fresh);
     lastAnalyzedHashRef.current = freshHash;
     setInsightError(null);
+    if (previewMode) return;
     try {
       await storage.set('current-date', today());
       for (const uid of allowedUserIds) {
@@ -3673,6 +3700,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     });
     lastAnalyzedHashRef.current[currentUserId] = null;
     setInsightError(null);
+    if (previewMode) return;
     try {
       await storage.set(`plan-${currentUserId}`, JSON.stringify(USERS[currentUserId].plan));
       await storage.set(`status-${currentUserId}`, JSON.stringify({}));
@@ -4423,13 +4451,19 @@ RÈGLES
   const RING_COLORS = { cal: '#3b82f6', p: '#10b981', g: '#f59e0b', l: '#ec4899' };
   const isRateLimited = Date.now() < rateLimitedUntil;
   const rateLimitWait = isRateLimited ? Math.ceil((rateLimitedUntil - Date.now()) / 1000) : 0;
-  const canAnalyze = !insightLoading && !isRateLimited;
+  const canAnalyze = !previewMode && !insightLoading && !isRateLimited;
   const stateChanged = changesSinceAnalysis > 0;
 
   return (
     <div className="min-h-screen bg-slate-50 p-3 sm:p-6">
       <div className="max-w-3xl mx-auto pb-24 safe-bottom">
-        {!accessContext?.is_coach && <ClientCoachAccess section={activeSection} />}
+        {previewMode && (
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-3 shadow-sm">
+            <div><p className="text-xs font-black uppercase tracking-widest text-violet-700">Aperçu coach</p><p className="mt-0.5 text-xs text-violet-900">Prospect fictif · aucune donnée enregistrée</p></div>
+            <button type="button" onClick={onExitPreview} className="min-h-11 shrink-0 rounded-xl bg-violet-600 px-3 text-xs font-black text-white">Retour à Luca</button>
+          </div>
+        )}
+        {!previewMode && !accessContext?.is_coach && <ClientCoachAccess section={activeSection} />}
         {/* Journal section - hidden when other section active */}
       <div style={{display: activeSection !== 'journal' ? 'none' : 'block'}}>
         {/* Header */}
@@ -4447,10 +4481,10 @@ RÈGLES
               onClick={handleSignOut}
               disabled={signingOut}
               className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-[11px] font-semibold text-slate-600 shadow-sm transition active:scale-[0.98] active:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-70"
-              title="Se déconnecter"
+              title={previewMode ? "Quitter l’aperçu" : "Se déconnecter"}
             >
               <LogOut size={14} />
-              {signingOut ? '…' : 'Déconnexion'}
+              {signingOut ? '…' : previewMode ? 'Retour' : 'Déconnexion'}
             </button>
             <button onClick={resetCurrentUser} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-100" title={`Réinitialiser ${user.name} · ${user.modeLabel}`}>
               <RotateCcw size={16} />
@@ -4461,8 +4495,8 @@ RÈGLES
         {/* Profile + Mode Switchers */}
         <div className="mb-2 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 shadow-sm">
           <span>{BASE_PROFILE[accountProfileId].avatar} Compte de <strong className="text-slate-700">{BASE_PROFILE[accountProfileId].name}</strong></span>
-          <span className={syncState === 'synced' ? 'text-emerald-600' : syncState === 'offline' ? 'text-amber-600' : 'text-slate-400'}>
-            {syncState === 'synced' ? '☁ Sauvegardé' : syncState === 'offline' ? 'Hors ligne' : syncState === 'saving' ? 'Sauvegarde…' : 'Synchronisation…'}
+          <span className={syncState === 'synced' ? 'text-emerald-600' : syncState === 'offline' ? 'text-amber-600' : syncState === 'preview' ? 'text-violet-600' : 'text-slate-400'}>
+            {syncState === 'synced' ? '☁ Sauvegardé' : syncState === 'offline' ? 'Hors ligne' : syncState === 'saving' ? 'Sauvegarde…' : syncState === 'preview' ? '👁 Aperçu local' : 'Synchronisation…'}
           </span>
         </div>
         <ModeSwitcher currentProfile={currentProfile} currentMode={currentMode} onSelect={handleModeSwitch} />
@@ -4923,7 +4957,9 @@ RÈGLES
         <div className="pt-2"><MesuresView profileId={currentProfile} mesuresData={mesuresData} onUpdateMesures={updateMesures} captureRequest={measurementCaptureRequest} onMeasurementCaptured={() => setMeasurementCaptureRequest(null)} progressReport={progressReport} /></div>
       )}
       {activeSection === 'settings' && (
-        <AccountSettings session={session} profileName={BASE_PROFILE[accountProfileId]?.name} syncState={syncState} onSignOut={handleSignOut} signingOut={signingOut} isCoach={accessContext?.is_coach} onOpenCoach={() => setActiveSection('coach')} />
+        previewMode
+          ? <div className="rounded-2xl border border-violet-200 bg-white p-5 text-center shadow-sm"><h2 className="font-black text-slate-900">Réglages du prospect</h2><p className="mt-2 text-sm text-slate-600">Les réglages de compte sont volontairement désactivés dans l’aperçu pour protéger ton compte coach.</p><button type="button" onClick={onExitPreview} className="mt-4 min-h-12 w-full rounded-xl bg-violet-600 px-4 font-black text-white">Retour à mon compte Luca</button></div>
+          : <AccountSettings session={session} profileName={BASE_PROFILE[accountProfileId]?.name} syncState={syncState} onSignOut={handleSignOut} signingOut={signingOut} isCoach={accessContext?.is_coach} onOpenCoach={() => setActiveSection('coach')} />
       )}
       {activeSection === 'coach' && accessContext?.is_coach && (
         <CoachDashboard onBack={() => setActiveSection('settings')} />
