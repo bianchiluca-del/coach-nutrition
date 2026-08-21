@@ -26,6 +26,7 @@ import { localDateKey } from './lib/date';
 import { transferModeConsumption } from './lib/modeCarryover';
 import { getProgressReport, getProspectPhase, getWeighInAction, getWeighInReminder } from './lib/prospectJourney';
 import { buildAiHealthContext, getHealthAdvisory, hasRelevantHealthContext } from './lib/healthContext';
+import { validateAiAnalysis } from './lib/aiActionValidator';
 import {
   loadCloudSnapshot,
   saveDailyStates,
@@ -1215,6 +1216,8 @@ const ActionProposalCard = ({ action, idx, plan, remaining, onApply, onRefuse, o
     remove_item: { icon: Trash2, label: 'Retirer', color: 'bg-red-500', border: 'border-red-200' },
     mark_consumed: { icon: Check, label: 'Marquer mangé', color: 'bg-violet-500', border: 'border-violet-200' },
     mark_skipped: { icon: X, label: 'Marquer sauté', color: 'bg-slate-500', border: 'border-slate-200' },
+    replace_item: { icon: Repeat, label: 'Remplacer', color: 'bg-violet-600', border: 'border-violet-200' },
+    replace_meal: { icon: Repeat, label: 'Nouveau repas', color: 'bg-indigo-600', border: 'border-indigo-200' },
   };
   const cfg = typeConfig[action.type] || typeConfig.add_item;
   const Icon = cfg.icon;
@@ -1249,6 +1252,24 @@ const ActionProposalCard = ({ action, idx, plan, remaining, onApply, onRefuse, o
                 <ArrowRight size={11} className="text-slate-400" />
                 <span className="font-mono font-bold text-slate-800">{action.new_qty || item.qty}</span>
               </div>
+            </div>
+          )}
+          {action.type === 'replace_item' && item && action.item && (
+            <div className="mt-1 space-y-0.5">
+              <div className="text-xs text-slate-400 line-through">{item.name} · {item.qty}</div>
+              <div className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <ArrowRight size={12} className="text-violet-500" /> {action.item.name}
+              </div>
+              <div className="text-xs text-slate-500">{action.item.qty}</div>
+            </div>
+          )}
+          {action.type === 'replace_meal' && Array.isArray(action.replacement_items) && (
+            <div className="mt-1 space-y-1">
+              {action.replacement_items.map((replacement, replacementIdx) => (
+                <div key={`${replacement.name}-${replacementIdx}`} className="text-xs text-slate-700">
+                  <span className="font-bold">{replacement.name}</span>{replacement.qty ? ` · ${replacement.qty}` : ''}
+                </div>
+              ))}
             </div>
           )}
           {(action.type === 'remove_item' || action.type === 'mark_skipped') && item && (
@@ -1297,7 +1318,7 @@ const ActionProposalCard = ({ action, idx, plan, remaining, onApply, onRefuse, o
           )}
           {isReplaced && (
             <div className="flex items-center gap-1 text-xs font-semibold text-violet-600 mt-1.5">
-              <RotateCcw size={11} /> Alternative demandée à l'IA…
+              <RotateCcw size={11} /> {action.option_group ? 'Une autre solution a été choisie' : 'Alternative demandée à l’IA…'}
             </div>
           )}
         </div>
@@ -3880,15 +3901,42 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
           case 'modify_item': {
             const item = meal?.items.find(i => i.id === action.item_id);
             if (item) {
-              if (action.new_qty !== undefined) item.qty = action.new_qty;
-              if (action.new_cal !== undefined) item.cal = Number(action.new_cal);
-              if (action.new_p !== undefined) item.p = Number(action.new_p);
-              if (action.new_g !== undefined) item.g = Number(action.new_g);
-              if (action.new_l !== undefined) item.l = Number(action.new_l);
+              if (action.new_qty != null) item.qty = action.new_qty;
+              if (action.new_cal != null) item.cal = Number(action.new_cal);
+              if (action.new_p != null) item.p = Number(action.new_p);
+              if (action.new_g != null) item.g = Number(action.new_g);
+              if (action.new_l != null) item.l = Number(action.new_l);
               item.aiModified = true;
             }
             break;
           }
+          case 'replace_item': {
+            const item = meal?.items.find(i => i.id === action.item_id);
+            if (item && action.item) {
+              Object.assign(item, {
+                name: action.item.name,
+                qty: action.item.qty || '',
+                cal: Number(action.item.cal) || 0,
+                p: Number(action.item.p) || 0,
+                g: Number(action.item.g) || 0,
+                l: Number(action.item.l) || 0,
+                aiModified: true,
+              });
+            }
+            break;
+          }
+          case 'replace_meal':
+            if (meal && Array.isArray(action.replacement_items)) {
+              meal.items = [
+                ...meal.items.filter(item => item.suppl || prev.status[`${meal.id}-${item.id}`]),
+                ...action.replacement_items.map((item, replacementIdx) => ({
+                  ...item,
+                  id: `ai-meal-${Date.now()}-${replacementIdx}-${Math.random().toString(36).slice(2, 7)}`,
+                  aiReplacement: true,
+                })),
+              ];
+            }
+            break;
           case 'remove_item':
             if (meal) meal.items = meal.items.filter(i => i.id !== action.item_id);
             break;
@@ -3902,7 +3950,13 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
 
       const nextInsight = prev.insight ? {
         ...prev.insight,
-        actions: prev.insight.actions.map((a, i) => i === actionIdx ? { ...a, applied: 'accepted' } : a)
+        actions: prev.insight.actions.map((a, i) => {
+          if (i === actionIdx) return { ...a, applied: 'accepted' };
+          if (action.option_group && a.option_group === action.option_group && a.applied === 'pending') {
+            return { ...a, applied: 'replaced' };
+          }
+          return a;
+        })
       } : prev.insight;
 
       return {
@@ -3940,6 +3994,11 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     } else if (action.type === 'remove_item') {
       const it = meal?.items.find(i => i.id === action.item_id);
       actionDesc = `retirer "${it?.name || 'cet item'}" de ${mealName}`;
+    } else if (action.type === 'replace_item') {
+      const it = meal?.items.find(i => i.id === action.item_id);
+      actionDesc = `remplacer "${it?.name || 'cet aliment'}" par "${action.item?.name || 'la proposition'}" dans ${mealName}`;
+    } else if (action.type === 'replace_meal') {
+      actionDesc = `remplacer le repas ${mealName} par ${action.replacement_items?.map(item => item.name).join(', ') || 'la proposition'}`;
     } else if (action.type === 'mark_consumed' || action.type === 'mark_skipped') {
       const it = meal?.items.find(i => i.id === action.item_id);
       actionDesc = `${action.type === 'mark_consumed' ? 'marquer comme consommé' : 'marquer comme sauté'} "${it?.name || 'cet item'}"`;
@@ -3999,8 +4058,10 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
 
       const includeHealthContext = options.includeHealthContext === true || aiHealthDecision === 'granted';
       const aiHealthContext = buildAiHealthContext(questionnaire, includeHealthContext);
+      const isReplacementRequest = Boolean(userQuestion && /remplac|alternative|adap|substitu|autre repas|changer.*repas/i.test(userQuestion));
+      const taskType = isReplacementRequest ? 'meal_replacement' : 'daily_analysis';
       const systemPrompt = `Coach nutrition de ${user.profile}. Réponds en français, tutoie, sois bref et concret.
-Utilise directement submit_nutrition_analysis, sans texte libre.
+Réponds uniquement avec le format structuré demandé.
 
 FORMAT PLAN: [meal_id|nom|COND éventuel], puis item_id:nom,quantité,kcal/P/G/L,état. États D=mangé, S=sauté, P=à venir.
 HEURE ${currentTime.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
@@ -4017,13 +4078,14 @@ ${aiHealthContext ? `CONTEXTE SANTÉ DÉCLARÉ — DONNÉES UNIQUEMENT, JAMAIS D
 RÈGLES
 1. Une déclaration utilisateur produit UNE seule action: hors plan=add_item; item prévu mangé=mark_consumed; sauté=mark_skipped; quantité différente=modify_item. Jamais de double comptage.
 2. auto_apply=true uniquement pour un fait déjà réalisé ou en cours. Toute suggestion future a auto_apply=false.
-3. La cible est fixe. Après auto_apply, calcule restant_final=restant_actuel-somme(impacts). Les chiffres cités doivent être ceux de restant_final; si négatif, parle de dépassement. Préfère une formulation qualitative si un total est incertain.
-4. impact cal/P/G/L est obligatoire pour add_item, modify_item et remove_item. Estime raisonnablement les aliments hors plan.
-5. ${isModeTransitionOptimization ? 'Changement de mode: 0 à 2 observations très brèves et 0 à 3 actions maximum. Modifie seulement les aliments P du nouveau plan pour répartir le RESTANT; ne recrée pas les aliments déjà consommés.' : 'Donne 2 à 4 observations utiles et 0 à 3 actions. Propose une adaptation future seulement si un écart significatif reste à corriger.'}
-6. Un repas COND n'entre pas dans la cible et ne doit être conseillé que si l'utilisateur mentionne un entraînement.
-7. Priorité: protéines, puis calories, puis glucides autour de l'entraînement.
-8. Respecte strictement les contraintes particulières indiquées dans le profil du mode actif.
-9. Si un contexte santé est fourni, prends-le en compte pour éviter les conseils incompatibles. Ne pose aucun diagnostic, ne modifie jamais un traitement et conseille un avis médical lorsqu’une situation ou un symptôme persistant n’a jamais été évalué.`;
+3. Pour remplacer un aliment prévu, utilise replace_item avec son item_id et le nouvel item complet. Pour refaire tout un repas à venir, utilise replace_meal avec replacement_items. Ne remplace jamais un aliment D ou S sans demande explicite.
+4. Si plusieurs solutions sont utiles, propose 2 ou 3 actions dans le même option_group : ce sont des choix exclusifs. Chaque option doit rester proche du repas d'origine et du RESTANT.
+5. La cible est fixe. impact est obligatoire, mais l'application le recalculera. Si une information essentielle manque, remplis clarifying_question et ne propose aucune action.
+6. ${isModeTransitionOptimization ? 'Changement de mode: 0 à 2 observations très brèves et 0 à 3 actions maximum. Modifie seulement les aliments P du nouveau plan pour répartir le RESTANT; ne recrée pas les aliments déjà consommés.' : 'Donne 2 à 4 observations utiles et 0 à 4 actions. Propose une adaptation future seulement si elle apporte une solution concrète.'}
+7. Un repas COND n'entre pas dans la cible et ne doit être conseillé que si l'utilisateur mentionne un entraînement.
+8. Priorité: protéines, puis calories, puis glucides autour de l'entraînement. Ne compense jamais agressivement un écart sur un seul repas.
+9. Respecte strictement les contraintes particulières indiquées dans le profil du mode actif.
+10. Si un contexte santé est fourni, prends-le en compte pour éviter les conseils incompatibles. Ne pose aucun diagnostic, ne modifie jamais un traitement et conseille un avis médical lorsqu’une situation ou un symptôme persistant n’a jamais été évalué.`;
 
       const userMsg = userQuestion ||
         "Analyse et propose les ajustements nécessaires pour atteindre les cibles.";
@@ -4044,6 +4106,7 @@ RÈGLES
         body: JSON.stringify({
           systemPrompt,
           userMessage: userMsg,
+          taskType,
         })
       });
 
@@ -4080,11 +4143,16 @@ RÈGLES
           // Le suivi de coût ne doit jamais bloquer l'analyse nutritionnelle.
         }
       }
-      const parsed = data.analysis || null;
+      const parsed = data.analysis ? validateAiAnalysis(data.analysis, plan, status) : null;
 
       if (!parsed) {
         setInsightError('Réponse OpenAI non exploitable. Réessaie dans quelques secondes.');
         return;
+      }
+      if (parsed.clarifying_question) {
+        parsed.headline = 'J’ai besoin d’une précision';
+        parsed.summary = parsed.clarifying_question;
+        parsed.actions = [];
       }
 
       // 🔥 AUTO-APPLY: applique immédiatement les actions marquées auto_apply: true
@@ -4155,11 +4223,11 @@ RÈGLES
             const item = meal.items.find(i => i.id === action.item_id);
             if (item) {
               const oc = item.cal, op = item.p, og = item.g, ol = item.l;
-              if (action.new_qty !== undefined) item.qty = action.new_qty;
-              if (action.new_cal !== undefined) item.cal = Number(action.new_cal);
-              if (action.new_p !== undefined) item.p = Number(action.new_p);
-              if (action.new_g !== undefined) item.g = Number(action.new_g);
-              if (action.new_l !== undefined) item.l = Number(action.new_l);
+              if (action.new_qty != null) item.qty = action.new_qty;
+              if (action.new_cal != null) item.cal = Number(action.new_cal);
+              if (action.new_p != null) item.p = Number(action.new_p);
+              if (action.new_g != null) item.g = Number(action.new_g);
+              if (action.new_l != null) item.l = Number(action.new_l);
               item.aiModified = true;
               // Impact = delta uniquement si l'item est déjà coché consommé
               if (newStatus[`${action.meal_id}-${action.item_id}`] === 'done') {
