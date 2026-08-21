@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 import { localDateKey } from './date';
 import { normalizeCalibration } from './prospectJourney';
+import { upgradeNutritionProfileExperience } from './onboardingPlan';
 
 export async function profileForSession(session) {
   if (!session?.user?.id) return null;
@@ -22,15 +23,15 @@ export async function nutritionProfileForSession(session) {
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
-  if (Number(data.calibration_json?.version || 0) >= 2) return data;
-  const upgradedProfile = {
-    ...data,
-    calibration_json: normalizeCalibration(data.calibration_json, data.updated_at),
-    updated_at: new Date().toISOString(),
-  };
+  const normalizedProfile = Number(data.calibration_json?.version || 0) >= 2
+    ? data
+    : { ...data, calibration_json: normalizeCalibration(data.calibration_json, data.updated_at) };
+  const upgradedProfile = upgradeNutritionProfileExperience(normalizedProfile);
+  if (Number(data.calibration_json?.experienceVersion || 0) >= 1
+      && Number(data.calibration_json?.version || 0) >= 3) return data;
   const { data: saved, error: upgradeError } = await supabase
     .from('user_nutrition_profiles')
-    .upsert(upgradedProfile, { onConflict: 'user_id' })
+    .upsert({ ...upgradedProfile, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
     .select('user_id, profile_id, display_name, questionnaire_json, plan_modes_json, calibration_json, onboarding_status, updated_at')
     .single();
   if (upgradeError) throw upgradeError;

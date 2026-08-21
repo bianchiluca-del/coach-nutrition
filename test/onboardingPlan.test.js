@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateNutritionProfile } from '../src/lib/onboardingPlan.js';
+import { generateNutritionProfile, upgradeNutritionProfileExperience } from '../src/lib/onboardingPlan.js';
 import { localDateKey } from '../src/lib/date.js';
 
 const answers = overrides => ({
@@ -78,6 +78,42 @@ test('les identifiants repas et aliments restent stables entre les modes', () =>
   const signature = mode => mode.plan.map(meal => ({ id: meal.id, items: meal.items.map(item => item.id) }));
   assert.deepEqual(signature(modes[1]), signature(modes[0]));
   assert.deepEqual(signature(modes[2]), signature(modes[0]));
+});
+
+test('un prospect reçoit les mêmes trois modes visibles que le compte Luca', () => {
+  const profile = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000070');
+  assert.deepEqual(Object.values(profile.plan_modes_json).map(mode => ({ id: mode.id, label: mode.label, emoji: mode.emoji })), [
+    { id: 'standard', label: 'Standard', emoji: '💼' },
+    { id: 'hard', label: 'Hard', emoji: '🔥' },
+    { id: 'deficit', label: 'Déficit', emoji: '📉' },
+  ]);
+});
+
+test('tous les aliments générés proposent un remplacement, pas seulement les protéines', () => {
+  const profile = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000071');
+  for (const mode of Object.values(profile.plan_modes_json)) {
+    for (const item of mode.plan.flatMap(meal => meal.items)) {
+      assert.ok(item.swappable, `${mode.label} · ${item.name} doit pouvoir être remplacé`);
+    }
+  }
+});
+
+test('les profils bêta existants sont mis à niveau sans modifier leurs quantités', () => {
+  const legacy = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000072');
+  legacy.calibration_json = { ...legacy.calibration_json, version: 2, experienceVersion: 0 };
+  legacy.plan_modes_json = {
+    standard: legacy.plan_modes_json.standard,
+    training: { ...legacy.plan_modes_json.hard, id: 'training', label: 'Training' },
+    rest: { ...legacy.plan_modes_json.deficit, id: 'rest', label: 'Repos' },
+  };
+  const quantityBefore = legacy.plan_modes_json.training.plan[0].items[0].qty;
+  delete legacy.plan_modes_json.training.plan[0].items[0].swappable;
+  const upgraded = upgradeNutritionProfileExperience(legacy);
+  assert.equal(upgraded.calibration_json.experienceVersion, 1);
+  assert.equal(upgraded.plan_modes_json.training.label, 'Hard');
+  assert.equal(upgraded.plan_modes_json.rest.label, 'Déficit');
+  assert.equal(upgraded.plan_modes_json.training.plan[0].items[0].qty, quantityBefore);
+  assert.ok(upgraded.plan_modes_json.training.plan[0].items[0].swappable);
 });
 
 test('le calibrage ne crée pas de portions alimentaires aberrantes', () => {
