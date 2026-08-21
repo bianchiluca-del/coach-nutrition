@@ -33,6 +33,7 @@ import {
   savePreferences,
   saveTracking,
 } from './lib/cloudSync';
+import { reportAppError } from './lib/monitoring';
 
 // Parse la valeur en grammes depuis une string comme "120 g", "400g", "2 pieces" etc.
 function parseGrams(qtyStr) {
@@ -3080,7 +3081,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     } catch (error) {
-      console.error('Erreur lors de la déconnexion :', error);
+      reportAppError(error, { area: 'auth', operation: 'sign_out' });
     } finally {
       setSigningOut(false);
     }
@@ -3165,7 +3166,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
     if (!session?.user?.id) return;
     loadFoodFavorites(session.user.id)
       .then(setFoodFavorites)
-      .catch(error => console.error('Chargement des favoris impossible :', error));
+      .catch(error => reportAppError(error, { area: 'favorites', operation: 'load' }));
   }, [session?.user?.id]);
 
   const handleSaveFavorite = async (entry) => {
@@ -3173,7 +3174,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
       const saved = await saveFoodFavorite(session.user.id, entry);
       setFoodFavorites(previous => [saved, ...previous.filter(item => item.id !== saved.id && item.name !== saved.name)]);
     } catch (error) {
-      console.error('Enregistrement du favori impossible :', error);
+      reportAppError(error, { area: 'favorites', operation: 'save' });
     }
   };
 
@@ -3182,7 +3183,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
       await deleteFoodFavorite(session.user.id, favoriteId);
       setFoodFavorites(previous => previous.filter(item => item.id !== favoriteId));
     } catch (error) {
-      console.error('Suppression du favori impossible :', error);
+      reportAppError(error, { area: 'favorites', operation: 'delete' });
     }
   };
 
@@ -3260,7 +3261,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
             setLastModeByProfile(validated);
           }
         } catch {}
-      } catch (e) { console.error(e); }
+      } catch (error) { reportAppError(error, { area: 'storage', operation: 'initial_load' }); }
       finally { setStorageReady(true); }
     })();
   }, [accountDefaultUserId, accountProfileId]);
@@ -3346,7 +3347,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
         setCloudReady(true);
         setSyncState('synced');
       } catch (error) {
-        console.error('Chargement Supabase impossible :', error);
+        reportAppError(error, { area: 'sync', operation: 'cloud_load' });
         setCloudReady(true);
         setSyncState('offline');
         cloudApplyingRef.current = false;
@@ -3371,7 +3372,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
         });
         setSyncState('synced');
       } catch (error) {
-        console.error('Sauvegarde Supabase impossible :', error);
+        reportAppError(error, { area: 'sync', operation: 'daily_save' });
         setSyncState('offline');
       }
     }, 900);
@@ -3531,7 +3532,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
         profileId: accountProfileId,
         modeId: USERS[currentUserId]?.modeId || DEFAULT_MODE_BY_PROFILE[accountProfileId],
         lastModeByProfile,
-      }).catch(error => console.error('Préférences Supabase impossibles :', error));
+      }).catch(error => reportAppError(error, { area: 'sync', operation: 'preferences_save' }));
     }, 500);
     return () => clearTimeout(timer);
   }, [currentUserId, lastModeByProfile, cloudReady, session?.user?.id, accountProfileId]);
@@ -3544,7 +3545,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
         profileId: accountProfileId,
         suivi: suiviData[accountProfileId] || {},
         measurements: mesuresData[accountProfileId] || [],
-      }).catch(error => console.error('Suivi Supabase impossible :', error));
+      }).catch(error => reportAppError(error, { area: 'sync', operation: 'tracking_save' }));
     }, 900);
     return () => clearTimeout(timer);
   }, [suiviData, mesuresData, cloudReady, session?.user?.id, accountProfileId]);
@@ -4270,7 +4271,7 @@ RÈGLES
         aiHealthContextConsentAt: new Date().toISOString(),
       };
       saveNutritionProfile({ ...nutritionProfile, questionnaire_json: updatedQuestionnaire })
-        .catch(error => console.error('Consentement IA non synchronisé :', error));
+        .catch(error => reportAppError(error, { area: 'ai_consent', operation: 'save' }));
     }
     if (request) {
       generateInsight(request.userQuestion, { skipHealthConsent: true, includeHealthContext: granted });
