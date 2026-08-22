@@ -24,9 +24,9 @@ jobs:
     steps:
       - name: Poll Sentry without using AI tokens
         id: scan
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_MONITOR_TOKEN }}
           SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
           SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
         with:
@@ -173,7 +173,7 @@ jobs:
         run: npm ci
 
       - name: Materialize the sanitized incident
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           INCIDENT_B64: ${{ needs.scan.outputs.incident_b64 }}
         with:
@@ -207,7 +207,7 @@ jobs:
       - name: Remove agent-only files and enforce the safety boundary
         id: guard
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -242,7 +242,7 @@ jobs:
 
       - name: Report when no safe automatic change is possible
         if: success() && steps.guard.outputs.safe != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           BLOCKED_FILES: ${{ steps.guard.outputs.blocked_files }}
         with:
@@ -307,7 +307,7 @@ jobs:
 
       - name: Close the incident after successful publication
         if: steps.guard.outputs.safe == 'true' && success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -328,7 +328,7 @@ jobs:
 
       - name: Report an automation failure for human review
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
