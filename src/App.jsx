@@ -1109,6 +1109,15 @@ function stateHash(plan, status) {
   return plan.map(m => m.items.map(i => `${m.id}/${i.id}/${i.cal}/${i.p}/${status[`${m.id}-${i.id}`] || ''}`).join(';')).join('||');
 }
 
+function friendlyAiError(error) {
+  if (error?.status === 401) return 'Ta session a expiré. Reconnecte-toi puis relance l’analyse.';
+  if (error?.status === 429) return 'L’IA reçoit trop de demandes. Attends une minute puis réessaie.';
+  if (error?.retryable || error?.status >= 500) {
+    return 'L’IA n’a pas réussi à finaliser cette analyse malgré la récupération automatique. Réessaie dans quelques secondes.';
+  }
+  return 'L’analyse n’a pas pu être terminée. Réessaie dans quelques secondes.';
+}
+
 // ===== COMPOSANTS PRÉSENTATIONNELS =====
 
 const BigRing = ({ label, current, target, color, unit = '' }) => {
@@ -3048,6 +3057,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
   const [foodFavorites, setFoodFavorites] = useState([]);
   const [pendingModeId, setPendingModeId] = useState(null);
   const [pendingAiHealthRequest, setPendingAiHealthRequest] = useState(null);
+  const lastAiRequestRef = useRef(null);
   const [aiHealthDecision, setAiHealthDecision] = useState(() => {
     const stored = nutritionProfile?.questionnaire_json?.aiHealthContextConsent;
     return stored === true ? 'granted' : stored === false ? 'declined' : 'unasked';
@@ -4065,6 +4075,7 @@ export default function App({ session, accountProfileId, nutritionProfile, acces
 
     setInsightLoading(true);
     setInsightError(null);
+    lastAiRequestRef.current = { userQuestion, options };
 
     try {
       const isModeTransitionOptimization = userQuestion?.startsWith('Changement de mode :');
@@ -4144,9 +4155,13 @@ RÈGLES
         return;
       }
       if (!response.ok) {
-        let errDetail = '';
-        try { const errBody = await response.text(); errDetail = errBody.slice(0, 200); } catch {}
-        throw new Error(`API ${response.status}${errDetail ? ' — ' + errDetail : ''}`);
+        let errBody = null;
+        try { errBody = await response.json(); } catch {}
+        const apiError = new Error(`AI API ${response.status}`);
+        apiError.status = response.status;
+        apiError.code = errBody?.code || 'ai_api_error';
+        apiError.retryable = errBody?.retryable === true || response.status >= 500;
+        throw apiError;
       }
 
       const data = await response.json();
@@ -4174,8 +4189,10 @@ RÈGLES
       const parsed = data.analysis ? validateAiAnalysis(data.analysis, plan, status) : null;
 
       if (!parsed) {
-        setInsightError('Réponse OpenAI non exploitable. Réessaie dans quelques secondes.');
-        return;
+        const validationError = new Error('AI analysis validation failed');
+        validationError.code = 'invalid_ai_analysis';
+        validationError.retryable = true;
+        throw validationError;
       }
       if (parsed.clarifying_question) {
         parsed.headline = 'J’ai besoin d’une précision';
@@ -4337,13 +4354,15 @@ RÈGLES
       });
 
       lastAnalyzedHashRef.current[currentUserId] = hash;
+      lastAiRequestRef.current = null;
       if (userQuestion) {
         // Si c'est une demande d'alternative → ouvrir directement Adaptations (où sera la nouvelle proposition)
         // Sinon → Bilan (analyse globale)
         setTab(userQuestion.startsWith('Je refuse ta proposition de') ? 'plan' : 'bilan');
       }
     } catch (e) {
-      setInsightError(e.message || 'Erreur inconnue');
+      reportAppError(e, { area: 'ai', operation: 'generate_insight' });
+      setInsightError(friendlyAiError(e));
     } finally {
       setInsightLoading(false);
     }
@@ -4644,6 +4663,19 @@ RÈGLES
               <AlertCircle size={14} className="text-red-600 mt-0.5 flex-shrink-0" />
               <div className="text-xs flex-1 min-w-0">
                 <span className="font-semibold text-red-700 break-words">{insightError}</span>
+                {lastAiRequestRef.current && !insightLoading && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const failedRequest = lastAiRequestRef.current;
+                      setInsightError(null);
+                      generateInsight(failedRequest.userQuestion, failedRequest.options);
+                    }}
+                    className="mt-2 block min-h-9 rounded-lg bg-red-600 px-3 font-bold text-white active:bg-red-700"
+                  >
+                    Réessayer l’analyse
+                  </button>
+                )}
               </div>
               <button onClick={() => setInsightError(null)} className="text-red-400 hover:text-red-600 flex-shrink-0">
                 <X size={14} />

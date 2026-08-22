@@ -95,6 +95,78 @@ test('les remplacements de repas utilisent le modèle de raisonnement renforcé'
   }
 });
 
+test('le proxy régénère automatiquement une réponse IA dont le JSON est mal formé', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  let openAiAttempt = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), options });
+    if (String(url).endsWith('/auth/v1/user')) {
+      return new Response(JSON.stringify({ id: 'recovery-user' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    openAiAttempt += 1;
+    const outputText = openAiAttempt === 1
+      ? '{"headline":"Bilan" "summary":"Virgule manquante"}'
+      : JSON.stringify({ headline: 'Bilan récupéré', summary: 'Réponse valide.', observations: [], actions: [], clarifying_question: null });
+    return new Response(JSON.stringify({
+      model: openAiAttempt === 1 ? 'gpt-5.6-luna' : 'gpt-4.1-mini',
+      output_text: outputText,
+      usage: { input_tokens: 10, output_tokens: 5, input_tokens_details: { cached_tokens: 2 } },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+
+  try {
+    const response = await worker.fetch(new Request('https://proxy.test/v1/messages', {
+      method: 'POST',
+      headers: { Origin: ORIGIN, Authorization: 'Bearer valid-session-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemPrompt: 'Analyse.', userMessage: 'Test.' }),
+    }), { OPENAI_API_KEY: 'test-key' });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.analysis.headline, 'Bilan récupéré');
+    assert.equal(body.recovered, true);
+    assert.deepEqual(body.usage, { input_tokens: 20, output_tokens: 10, cached_input_tokens: 4 });
+    assert.equal(calls.length, 3);
+    const recoveryRequest = JSON.parse(calls[2].options.body);
+    assert.equal(recoveryRequest.model, 'gpt-4.1-mini');
+    assert.equal(recoveryRequest.max_output_tokens, 2800);
+    assert.match(recoveryRequest.instructions, /RÉCUPÉRATION TECHNIQUE/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('le proxy renvoie une erreur temporaire sûre si les deux réponses IA sont invalides', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    if (String(url).endsWith('/auth/v1/user')) {
+      return new Response(JSON.stringify({ id: 'double-failure-user' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ model: 'test-model', output_text: '{JSON invalide', usage: {} }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const response = await worker.fetch(new Request('https://proxy.test/v1/messages', {
+      method: 'POST',
+      headers: { Origin: ORIGIN, Authorization: 'Bearer valid-session-token', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemPrompt: 'Analyse.', userMessage: 'Test.' }),
+    }), { OPENAI_API_KEY: 'test-key' });
+
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      error: 'AI response recovery failed',
+      code: 'invalid_ai_json',
+      retryable: true,
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('le proxy refuse une requête sans session avant tout appel externe', async () => {
   const originalFetch = globalThis.fetch;
   let called = false;

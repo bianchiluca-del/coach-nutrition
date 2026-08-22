@@ -155,7 +155,37 @@ function responseText(payload) {
   return null;
 }
 
-async function callOpenAI(env, { model, systemPrompt, userMessage, taskType, safetyIdentifier }) {
+function parseAnalysisContent(content) {
+  if (typeof content !== 'string' || !content.trim()) throw new Error('empty_analysis');
+  const cleaned = content
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+  const analysis = JSON.parse(cleaned);
+  if (!analysis || typeof analysis !== 'object' || Array.isArray(analysis)) {
+    throw new Error('invalid_analysis_shape');
+  }
+  return analysis;
+}
+
+function responseUsage(payload) {
+  return {
+    input_tokens: payload?.usage?.input_tokens || 0,
+    output_tokens: payload?.usage?.output_tokens || 0,
+    cached_input_tokens: payload?.usage?.input_tokens_details?.cached_tokens || 0,
+  };
+}
+
+function mergeUsage(first, second) {
+  return {
+    input_tokens: first.input_tokens + second.input_tokens,
+    output_tokens: first.output_tokens + second.output_tokens,
+    cached_input_tokens: first.cached_input_tokens + second.cached_input_tokens,
+  };
+}
+
+async function callOpenAI(env, { model, systemPrompt, userMessage, taskType, safetyIdentifier, recovery = false }) {
   const complex = taskType === 'meal_replacement' || taskType === 'strategic_adjustment';
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
@@ -164,7 +194,7 @@ async function callOpenAI(env, { model, systemPrompt, userMessage, taskType, saf
       model,
       instructions: systemPrompt,
       input: userMessage,
-      max_output_tokens: complex ? 2200 : 1600,
+      max_output_tokens: recovery ? (complex ? 3600 : 2800) : (complex ? 2200 : 1600),
       reasoning: { effort: complex ? 'medium' : 'low' },
       text: {
         verbosity: 'low',
@@ -236,17 +266,51 @@ export default {
         return json({ error: payload?.error?.message || 'OpenAI request failed' }, openAIResponse.status, origin);
       }
 
-      const content = responseText(payload);
-      if (!content) return json({ error: 'Empty OpenAI response' }, 502, origin);
+      let usage = responseUsage(payload);
+      let analysis;
+      let recovered = false;
+      try {
+        analysis = parseAnalysisContent(responseText(payload));
+      } catch {
+        // Une réponse structurée peut exceptionnellement être tronquée ou mal
+        // sérialisée. On la régénère une seule fois côté serveur, avec plus de
+        // marge de sortie, au lieu d'exposer une erreur JSON au client.
+        recovered = true;
+        const recoveryModel = env.OPENAI_FALLBACK_MODEL?.trim() || DEFAULT_FALLBACK_MODEL;
+        const recoveryPrompt = `${systemPrompt}\n\nRÉCUPÉRATION TECHNIQUE : la tentative précédente n'était pas exploitable. Génère à nouveau la réponse complète et respecte strictement le schéma JSON, sans texte autour.`;
+        const recoveryResult = await callOpenAI(env, {
+          model: recoveryModel,
+          systemPrompt: recoveryPrompt,
+          userMessage,
+          taskType,
+          safetyIdentifier,
+          recovery: true,
+        });
+        usage = mergeUsage(usage, responseUsage(recoveryResult.payload));
+
+        if (!recoveryResult.response.ok) {
+          const status = recoveryResult.response.status === 429 ? 429 : 502;
+          return json({
+            error: status === 429 ? 'AI rate limit reached' : 'AI response recovery failed',
+            code: status === 429 ? 'ai_rate_limited' : 'ai_recovery_failed',
+            retryable: true,
+          }, status, origin);
+        }
+
+        try {
+          analysis = parseAnalysisContent(responseText(recoveryResult.payload));
+          payload = recoveryResult.payload;
+          model = recoveryModel;
+        } catch {
+          return json({ error: 'AI response recovery failed', code: 'invalid_ai_json', retryable: true }, 502, origin);
+        }
+      }
 
       return json({
-        analysis: JSON.parse(content),
+        analysis,
         model: payload.model || model,
-        usage: {
-          input_tokens: payload.usage?.input_tokens || 0,
-          output_tokens: payload.usage?.output_tokens || 0,
-          cached_input_tokens: payload.usage?.input_tokens_details?.cached_tokens || 0,
-        },
+        usage,
+        recovered,
       }, 200, origin);
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : 'Unexpected server error' }, 500, origin);
