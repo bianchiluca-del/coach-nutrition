@@ -1,14 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateNutritionProfile, upgradeNutritionProfileExperience } from '../src/lib/onboardingPlan.js';
+import {
+  activateDeficitProtocol,
+  generateNutritionProfile,
+  getDeficitProtocolState,
+  needsPersonalizationUpgrade,
+  normalizeTimedProtocols,
+  previewPersonalizationUpgrade,
+  upgradeNutritionProfileExperience,
+} from '../src/lib/onboardingPlan.js';
 import { localDateKey } from '../src/lib/date.js';
 
 const answers = overrides => ({
   firstName: 'Test', birthDate: '1990-01-01', sex: 'male', height: 178, weight: 76,
   goal: 'maintenance', activity: 'active', breakfastHabit: '3 œufs, miel, banane',
-  foodHabits: 'poulet, riz, saumon', allergies: '', exclusions: '', medical: '',
+  foodHabits: 'dinde, riz, saumon', allergies: '', exclusions: '', dislikedFoods: '', medical: '',
   digestion: '', processAcknowledged: true, healthDataConsent: true,
-  mealCount: '4', trainingDays: '3', steps: '7500', jobActivity: 'mixed', ...overrides,
+  mealCount: '4', trainingDays: '3', steps: '7500', jobActivity: 'mixed',
+  trainingIntensity: 'moderate', trainingTime: 'evening', trainingDayPlan: 'yes',
+  dietaryStyle: 'omnivore', breakfastType: 'mixed',
+  preferredProteins: ['turkey', 'salmon'], preferredCarbs: ['rice', 'potato'], preferredSnacks: ['dairy'],
+  cookingTime: 'moderate', budgetLevel: 'standard', batchCooking: 'sometimes', workMealAccess: 'microwave',
+  ...overrides,
 });
 
 const allNames = profile => Object.values(profile.plan_modes_json)
@@ -19,109 +32,150 @@ test('la date quotidienne utilise le calendrier local', () => {
 });
 
 test('les allergènes et exclusions connus ne sont jamais ajoutés', () => {
-  const profile = generateNutritionProfile(answers({
-    allergies: 'Œufs et lactose',
-    exclusions: 'Poisson et saumon',
-  }), '00000000-0000-0000-0000-000000000001');
-  const names = allNames(profile).join(' | ');
-  assert.doesNotMatch(names, /œuf|oeuf|skyr|whey|cottage|saumon/);
+  const profile = generateNutritionProfile(answers({ allergies: 'Œufs et lactose', exclusions: 'Poisson et saumon' }), 'user-allergy');
+  assert.doesNotMatch(allNames(profile).join(' | '), /œuf|oeuf|skyr|whey|cottage|saumon|cabillaud|thon/);
 });
 
-test('une situation médicale déclarée ne bloque jamais la création du plan', () => {
-  const profile = generateNutritionProfile(
-    answers({ medical: 'Diabète traité par insuline' }),
-    '00000000-0000-0000-0000-000000000002',
-  );
+test('un profil végétalien ne reçoit aucun produit animal', () => {
+  const profile = generateNutritionProfile(answers({ dietaryStyle: 'vegan', preferredProteins: ['tofu', 'lentils'], preferredSnacks: ['fruit'] }), 'user-vegan');
+  assert.doesNotMatch(allNames(profile).join(' | '), /poulet|dinde|bœuf|boeuf|thon|cabillaud|saumon|œuf|oeuf|skyr|whey|cottage/);
+});
+
+test('une situation médicale déclarée avertit mais ne bloque jamais', () => {
+  const profile = generateNutritionProfile(answers({ medical: 'Diabète traité par insuline' }), 'user-health');
   assert.equal(profile.onboarding_status, 'completed');
   assert.match(profile.calibration_json.healthAdvisory, /ne remplacent pas un médecin/);
 });
 
-test('le consentement santé est obligatoire', () => {
-  assert.throws(
-    () => generateNutritionProfile(answers({ healthDataConsent: false }), '00000000-0000-0000-0000-000000000003'),
-    /consentement/,
-  );
+test('les consentements de processus et de santé sont obligatoires', () => {
+  assert.throws(() => generateNutritionProfile(answers({ healthDataConsent: false }), 'user-no-consent'), /consentement/);
+  assert.throws(() => generateNutritionProfile(answers({ processAcknowledged: false }), 'user-no-process'), /processus de personnalisation/);
 });
 
-test('la validation du processus est obligatoire', () => {
-  assert.throws(
-    () => generateNutritionProfile(answers({ processAcknowledged: false }), '00000000-0000-0000-0000-000000000030'),
-    /processus de personnalisation/,
-  );
-});
-
-test('le nombre de repas demandé est respecté dans tous les modes', () => {
+test('le nombre de repas demandé est respecté dans tous les modes utiles', () => {
   for (const count of [3, 4, 5]) {
-    const profile = generateNutritionProfile(answers({ mealCount: String(count) }), `00000000-0000-0000-0000-00000000004${count}`);
+    const profile = generateNutritionProfile(answers({ mealCount: String(count) }), `user-meals-${count}`);
     for (const mode of Object.values(profile.plan_modes_json)) assert.equal(mode.plan.length, count);
   }
 });
 
+test('Hard est créé seulement si le prospect le demande et s’entraîne', () => {
+  const noTraining = generateNutritionProfile(answers({ trainingDays: '0', trainingDayPlan: 'no' }), 'user-rest');
+  const onePlan = generateNutritionProfile(answers({ trainingDays: '4', trainingDayPlan: 'no' }), 'user-one-plan');
+  const hardPlan = generateNutritionProfile(answers({ trainingDays: '4', trainingDayPlan: 'yes' }), 'user-hard');
+  assert.deepEqual(Object.keys(noTraining.plan_modes_json), ['standard']);
+  assert.deepEqual(Object.keys(onePlan.plan_modes_json), ['standard']);
+  assert.deepEqual(Object.keys(hardPlan.plan_modes_json), ['standard', 'hard']);
+  assert.ok(hardPlan.plan_modes_json.hard.target.cal > hardPlan.plan_modes_json.standard.target.cal);
+});
+
+test('aucun prospect ne reçoit un déficit permanent à son inscription', () => {
+  const profile = generateNutritionProfile(answers({ goal: 'loss' }), 'user-loss');
+  assert.equal(profile.plan_modes_json.deficit, undefined);
+  assert.equal(getDeficitProtocolState(profile, new Date(profile.calibration_json.startedAt)).status, 'locked');
+});
+
 test('les pas, le métier et les entraînements personnalisent réellement la cible', () => {
-  const sedentary = generateNutritionProfile(answers({ activity: 'sedentary', jobActivity: 'desk', steps: '2000', trainingDays: '0' }), '00000000-0000-0000-0000-000000000050');
-  const active = generateNutritionProfile(answers({ activity: 'veryActive', jobActivity: 'physical', steps: '15000', trainingDays: '6' }), '00000000-0000-0000-0000-000000000051');
+  const sedentary = generateNutritionProfile(answers({ activity: 'sedentary', jobActivity: 'desk', steps: '2000', trainingDays: '0', trainingDayPlan: 'no' }), 'user-sedentary');
+  const active = generateNutritionProfile(answers({ activity: 'veryActive', jobActivity: 'physical', steps: '15000', trainingDays: '6' }), 'user-active');
   assert.ok(active.calibration_json.target.cal >= sedentary.calibration_json.target.cal + 500);
   assert.notEqual(active.calibration_json.target.activityFactor, sedentary.calibration_json.target.activityFactor);
 });
 
-test('les situations digestives et cardiaques créent un avertissement non bloquant', () => {
-  for (const medical of ['Maladie de Crohn', 'insuffisance cardiaque', 'chirurgie bypass', 'asthme sous traitement']) {
-    const profile = generateNutritionProfile(answers({ medical }), '00000000-0000-0000-0000-000000000060');
-    assert.equal(profile.onboarding_status, 'completed');
-    assert.match(profile.calibration_json.healthAdvisory, /professionnel de santé/);
-  }
+test('les préférences produisent des plans alimentaires différents', () => {
+  const fish = generateNutritionProfile(answers({ preferredProteins: ['salmon', 'whiteFish'], preferredCarbs: ['potato', 'quinoa'] }), 'user-fish');
+  const meat = generateNutritionProfile(answers({ preferredProteins: ['leanBeef', 'turkey'], preferredCarbs: ['pasta', 'rice'] }), 'user-meat');
+  const fishNames = allNames(fish).join(' | ');
+  const meatNames = allNames(meat).join(' | ');
+  assert.match(fishNames, /saumon|cabillaud/);
+  assert.match(meatNames, /steak|dinde/);
+  assert.notEqual(fishNames, meatNames);
 });
 
-test('les identifiants repas et aliments restent stables entre les modes', () => {
-  const profile = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000004');
-  const modes = Object.values(profile.plan_modes_json);
+test('les habitudes, horaires et contraintes d’organisation sont utilisés', () => {
+  const profile = generateNutritionProfile(answers({
+    preferredProteins: [], preferredCarbs: [], foodHabits: 'thon, quinoa, fruits',
+    workMealAccess: 'cold', cookingTime: 'quick', wakeTime: '05:30', sleepTime: '21:30',
+  }), 'user-organization');
+  const standard = profile.plan_modes_json.standard;
+  assert.match(allNames(profile).join(' | '), /thon/);
+  assert.equal(standard.plan.find(meal => meal.id === 'lunch').name, 'Repas froid transportable');
+  assert.equal(standard.plan[0].suggestedTime, '06:15');
+  assert.equal(standard.plan.at(-1).suggestedTime, '19:30');
+});
+
+test('un petit déjeuner sucré et une collation laitière restent cohérents avec leur contexte', () => {
+  const profile = generateNutritionProfile(answers({ breakfastType: 'sweet', preferredCarbs: ['potato', 'rice'], preferredSnacks: ['dairy'] }), 'user-breakfast');
+  const breakfast = profile.plan_modes_json.standard.plan.find(meal => meal.id === 'breakfast');
+  const snack = profile.plan_modes_json.standard.plan.find(meal => meal.id === 'snack');
+  assert.match(breakfast.items.map(item => item.name).join(' | '), /avoine|pain/);
+  assert.doesNotMatch(breakfast.items.map(item => item.name).join(' | '), /pomme de terre/);
+  assert.match(snack.items.map(item => item.name).join(' | '), /skyr|cottage/i);
+  assert.match(profile.plan_modes_json.hard.desc, /modéré · soir/);
+});
+
+test('les identifiants restent stables entre Standard et Hard pour reporter le journal', () => {
+  const profile = generateNutritionProfile(answers({}), 'user-stable');
   const signature = mode => mode.plan.map(meal => ({ id: meal.id, items: meal.items.map(item => item.id) }));
-  assert.deepEqual(signature(modes[1]), signature(modes[0]));
-  assert.deepEqual(signature(modes[2]), signature(modes[0]));
+  assert.deepEqual(signature(profile.plan_modes_json.hard), signature(profile.plan_modes_json.standard));
 });
 
-test('un prospect reçoit les mêmes trois modes visibles que le compte Luca', () => {
-  const profile = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000070');
-  assert.deepEqual(Object.values(profile.plan_modes_json).map(mode => ({ id: mode.id, label: mode.label, emoji: mode.emoji })), [
-    { id: 'standard', label: 'Standard', emoji: '💼' },
-    { id: 'hard', label: 'Hard', emoji: '🔥' },
-    { id: 'deficit', label: 'Déficit', emoji: '📉' },
-  ]);
+test('tous les aliments générés proposent un remplacement', () => {
+  const profile = generateNutritionProfile(answers({}), 'user-swaps');
+  for (const mode of Object.values(profile.plan_modes_json)) for (const item of mode.plan.flatMap(meal => meal.items)) assert.ok(item.swappable, `${mode.label} · ${item.name}`);
 });
 
-test('tous les aliments générés proposent un remplacement, pas seulement les protéines', () => {
-  const profile = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000071');
-  for (const mode of Object.values(profile.plan_modes_json)) {
-    for (const item of mode.plan.flatMap(meal => meal.items)) {
-      assert.ok(item.swappable, `${mode.label} · ${item.name} doit pouvoir être remplacé`);
-    }
-  }
+test('les profils existants gardent leur plan tant que le complément n’est pas confirmé', () => {
+  const legacy = generateNutritionProfile(answers({}), 'user-legacy');
+  legacy.calibration_json = { ...legacy.calibration_json, personalizationVersion: 0, version: 2, experienceVersion: 0 };
+  legacy.questionnaire_json = { ...legacy.questionnaire_json, personalizationVersion: 0 };
+  const planBefore = JSON.stringify(legacy.plan_modes_json);
+  const cosmeticUpgrade = upgradeNutritionProfileExperience(legacy);
+  assert.equal(needsPersonalizationUpgrade(cosmeticUpgrade), true);
+  assert.equal(cosmeticUpgrade.calibration_json.experienceVersion, 1);
+  assert.equal(JSON.stringify(legacy.plan_modes_json), planBefore);
 });
 
-test('les profils bêta existants sont mis à niveau sans modifier leurs quantités', () => {
-  const legacy = generateNutritionProfile(answers({}), '00000000-0000-0000-0000-000000000072');
-  legacy.calibration_json = { ...legacy.calibration_json, version: 2, experienceVersion: 0 };
-  legacy.plan_modes_json = {
-    standard: legacy.plan_modes_json.standard,
-    training: { ...legacy.plan_modes_json.hard, id: 'training', label: 'Training' },
-    rest: { ...legacy.plan_modes_json.deficit, id: 'rest', label: 'Repos' },
-  };
-  const quantityBefore = legacy.plan_modes_json.training.plan[0].items[0].qty;
-  delete legacy.plan_modes_json.training.plan[0].items[0].swappable;
-  const upgraded = upgradeNutritionProfileExperience(legacy);
-  assert.equal(upgraded.calibration_json.experienceVersion, 1);
-  assert.equal(upgraded.plan_modes_json.training.label, 'Hard');
-  assert.equal(upgraded.plan_modes_json.rest.label, 'Déficit');
-  assert.equal(upgraded.plan_modes_json.training.plan[0].items[0].qty, quantityBefore);
-  assert.ok(upgraded.plan_modes_json.training.plan[0].items[0].swappable);
+test('l’aperçu complémentaire préserve le démarrage et révise seulement le plan futur', () => {
+  const legacy = generateNutritionProfile(answers({}), 'user-preview', { startedAt: '2026-07-01T08:00:00.000Z' });
+  legacy.calibration_json.personalizationVersion = 0;
+  const original = JSON.stringify(legacy);
+  const preview = previewPersonalizationUpgrade(legacy, {
+    preferredProteins: ['tofu', 'lentils'], preferredCarbs: ['quinoa', 'sweetPotato'], preferredSnacks: ['fruit'],
+    dietaryStyle: 'vegan', mealCount: '3', trainingDays: '0', trainingDayPlan: 'no',
+  });
+  assert.equal(preview.user_id, legacy.user_id);
+  assert.equal(preview.calibration_json.startedAt, '2026-07-01T08:00:00.000Z');
+  assert.equal(preview.calibration_json.planRevision, 1);
+  assert.equal(preview.calibration_json.previousPlanPreservedInHistory, true);
+  assert.equal(preview.plan_modes_json.standard.plan.length, 3);
+  assert.deepEqual(Object.keys(preview.plan_modes_json), ['standard']);
+  assert.equal(JSON.stringify(legacy), original, 'la prévisualisation ne mute pas le profil enregistré');
+});
+
+test('le déficit apparaît après 30 jours, dure 7 jours puis disparaît', () => {
+  const startedAt = '2026-07-01T08:00:00.000Z';
+  const profile = generateNutritionProfile(answers({ goal: 'loss' }), 'user-deficit', { startedAt });
+  assert.equal(getDeficitProtocolState(profile, new Date('2026-07-30T08:00:00.000Z')).status, 'locked');
+  const availableAt = new Date('2026-07-31T08:00:00.000Z');
+  assert.equal(getDeficitProtocolState(profile, availableAt).status, 'available');
+  const active = activateDeficitProtocol(profile, availableAt);
+  assert.equal(getDeficitProtocolState(active, new Date('2026-08-03T08:00:00.000Z')).status, 'active');
+  assert.equal(active.plan_modes_json.deficit.label, 'Déficit · 7 jours');
+  const completed = normalizeTimedProtocols(active, new Date('2026-08-07T08:00:01.000Z'));
+  assert.equal(completed.plan_modes_json.deficit, undefined);
+  assert.equal(completed.calibration_json.deficitProtocol.status, 'completed');
+});
+
+test('le déficit n’est jamais proposé pour une prise de masse', () => {
+  const profile = generateNutritionProfile(answers({ goal: 'gain' }), 'user-gain', { startedAt: '2026-01-01T00:00:00.000Z' });
+  assert.equal(getDeficitProtocolState(profile, new Date('2026-08-01T00:00:00.000Z')).status, 'not_applicable');
 });
 
 test('le calibrage ne crée pas de portions alimentaires aberrantes', () => {
-  const profile = generateNutritionProfile(answers({ weight: 95, activity: 'veryActive', goal: 'gain' }), '00000000-0000-0000-0000-000000000005');
-  for (const mode of Object.values(profile.plan_modes_json)) {
-    for (const item of mode.plan.flatMap(meal => meal.items)) {
-      const amount = Number.parseFloat(item.qty);
-      if (Number.isFinite(amount) && item.qty.includes('g')) assert.ok(amount <= 550, `${item.name}: ${item.qty}`);
-    }
+  const profile = generateNutritionProfile(answers({ weight: 95, activity: 'veryActive', goal: 'gain' }), 'user-portions');
+  for (const mode of Object.values(profile.plan_modes_json)) for (const item of mode.plan.flatMap(meal => meal.items)) {
+    const amount = Number.parseFloat(item.qty);
+    if (Number.isFinite(amount) && item.qty.includes('g')) assert.ok(amount <= 500, `${item.name}: ${item.qty}`);
   }
 });

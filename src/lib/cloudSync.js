@@ -1,7 +1,7 @@
 import { supabase } from './supabaseClient';
 import { localDateKey } from './date';
 import { normalizeCalibration } from './prospectJourney';
-import { upgradeNutritionProfileExperience } from './onboardingPlan';
+import { normalizeTimedProtocols, upgradeNutritionProfileExperience } from './onboardingPlan';
 
 export async function profileForSession(session) {
   if (!session?.user?.id) return null;
@@ -26,9 +26,17 @@ export async function nutritionProfileForSession(session) {
   const normalizedProfile = Number(data.calibration_json?.version || 0) >= 2
     ? data
     : { ...data, calibration_json: normalizeCalibration(data.calibration_json, data.updated_at) };
-  const upgradedProfile = upgradeNutritionProfileExperience(normalizedProfile);
-  if (Number(data.calibration_json?.experienceVersion || 0) >= 1
-      && Number(data.calibration_json?.version || 0) >= 3) return data;
+  const upgradedProfile = normalizeTimedProtocols(upgradeNutritionProfileExperience(normalizedProfile));
+  const profileChanged = JSON.stringify({
+    questionnaire: data.questionnaire_json,
+    modes: data.plan_modes_json,
+    calibration: data.calibration_json,
+  }) !== JSON.stringify({
+    questionnaire: upgradedProfile.questionnaire_json,
+    modes: upgradedProfile.plan_modes_json,
+    calibration: upgradedProfile.calibration_json,
+  });
+  if (!profileChanged) return data;
   const { data: saved, error: upgradeError } = await supabase
     .from('user_nutrition_profiles')
     .upsert({ ...upgradedProfile, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })

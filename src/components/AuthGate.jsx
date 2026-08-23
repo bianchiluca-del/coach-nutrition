@@ -6,7 +6,10 @@ import Login from './Login';
 import OnboardingFlow from './OnboardingFlow';
 import BetaAccessGate from './BetaAccessGate';
 import RecoveryPassword from './RecoveryPassword';
+import PersonalizationUpgrade from './PersonalizationUpgrade';
+import DeficitProtocolOffer from './DeficitProtocolOffer';
 import { getAccessContext, pendingInvite, redeemBetaInvite } from '../lib/betaAccess';
+import { getDeficitProtocolState, needsPersonalizationUpgrade } from '../lib/onboardingPlan';
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
@@ -16,6 +19,8 @@ export default function AuthGate({ children }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [recoveringPassword, setRecoveringPassword] = useState(false);
+  const [upgradeDeferred, setUpgradeDeferred] = useState(false);
+  const [protocolDeferred, setProtocolDeferred] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -26,6 +31,8 @@ export default function AuthGate({ children }) {
         setProfileId(null);
         setNutritionProfile(null);
         setAccessContext(null);
+        setUpgradeDeferred(false);
+        setProtocolDeferred(false);
         return;
       }
 
@@ -124,6 +131,14 @@ export default function AuthGate({ children }) {
   }
 
   if (!profileId && nutritionProfile?.onboarding_status !== 'completed') return <OnboardingFlow session={session} onComplete={setNutritionProfile} isBetaClient={accessContext?.is_beta_client} />;
+
+  if (!profileId && needsPersonalizationUpgrade(nutritionProfile) && !upgradeDeferred) {
+    return <PersonalizationUpgrade profile={nutritionProfile} onComplete={setNutritionProfile} onLater={() => setUpgradeDeferred(true)} />;
+  }
+
+  if (!profileId && getDeficitProtocolState(nutritionProfile).status === 'available' && !protocolDeferred) {
+    return <DeficitProtocolOffer profile={nutritionProfile} onActivate={setNutritionProfile} onLater={() => setProtocolDeferred(true)} />;
+  }
 
   return typeof children === 'function' ? children(session, profileId || nutritionProfile.profile_id, nutritionProfile, accessContext) : children;
 }
