@@ -70,7 +70,12 @@ export default function OnboardingFlow({ session, onComplete, isBetaClient = fal
   const finish = async () => {
     setSaving(true); setError('');
     try {
-      const finalAnswers = { ...answers, aiHealthContextConsentAt: answers.aiHealthContextConsent ? new Date().toISOString() : '' };
+      const finalAnswers = {
+        ...answers,
+        aiHealthContextConsentAt: answers.aiHealthContextConsent ? new Date().toISOString() : '',
+        deficitProtocolNoticeVersion: 1,
+        deficitProtocolNoticeAcknowledgedAt: answers.processAcknowledgedAt || new Date().toISOString(),
+      };
       const profile = generateNutritionProfile(finalAnswers, session.user.id);
       const saved = await saveNutritionProfile(profile);
       if (isBetaClient) await setCoachDataConsent(answers.coachDataConsent);

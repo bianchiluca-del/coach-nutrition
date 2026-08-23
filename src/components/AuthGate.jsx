@@ -8,8 +8,9 @@ import BetaAccessGate from './BetaAccessGate';
 import RecoveryPassword from './RecoveryPassword';
 import PersonalizationUpgrade from './PersonalizationUpgrade';
 import DeficitProtocolOffer from './DeficitProtocolOffer';
+import CurrentProspectDeficitNotice from './CurrentProspectDeficitNotice';
 import { getAccessContext, pendingInvite, redeemBetaInvite } from '../lib/betaAccess';
-import { getDeficitProtocolState, needsPersonalizationUpgrade } from '../lib/onboardingPlan';
+import { getDeficitProtocolState, needsDeficitProtocolNotice, needsPersonalizationUpgrade } from '../lib/onboardingPlan';
 
 export default function AuthGate({ children }) {
   const [session, setSession] = useState(null);
@@ -131,6 +132,10 @@ export default function AuthGate({ children }) {
   }
 
   if (!profileId && nutritionProfile?.onboarding_status !== 'completed') return <OnboardingFlow session={session} onComplete={setNutritionProfile} isBetaClient={accessContext?.is_beta_client} />;
+
+  if (!profileId && needsDeficitProtocolNotice(nutritionProfile)) {
+    return <CurrentProspectDeficitNotice profile={nutritionProfile} onAcknowledged={setNutritionProfile} />;
+  }
 
   if (!profileId && needsPersonalizationUpgrade(nutritionProfile) && !upgradeDeferred) {
     return <PersonalizationUpgrade profile={nutritionProfile} onComplete={setNutritionProfile} onLater={() => setUpgradeDeferred(true)} />;

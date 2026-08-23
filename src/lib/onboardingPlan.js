@@ -1,6 +1,7 @@
 import { getHealthAdvisory } from './healthContext.js';
 
 export const PERSONALIZATION_VERSION = 2;
+export const DEFICIT_NOTICE_VERSION = 1;
 export const DEFICIT_DELAY_DAYS = 30;
 export const DEFICIT_DURATION_DAYS = 7;
 
@@ -356,7 +357,12 @@ export function generateNutritionProfile(answers, userId, options = {}) {
     user_id: userId,
     profile_id: `member-${userId}`,
     display_name: answers.firstName.trim(),
-    questionnaire_json: { ...answers, personalizationVersion: PERSONALIZATION_VERSION },
+    questionnaire_json: {
+      ...answers,
+      personalizationVersion: PERSONALIZATION_VERSION,
+      deficitProtocolNoticeVersion: Number(answers.deficitProtocolNoticeVersion || DEFICIT_NOTICE_VERSION),
+      deficitProtocolNoticeAcknowledgedAt: answers.deficitProtocolNoticeAcknowledgedAt || answers.processAcknowledgedAt || startedAt,
+    },
     onboarding_status: 'completed',
     calibration_json: {
       version: 4, experienceVersion: 2, personalizationVersion: PERSONALIZATION_VERSION,
@@ -377,6 +383,13 @@ export function generateNutritionProfile(answers, userId, options = {}) {
 
 export function needsPersonalizationUpgrade(profile) {
   return Boolean(profile?.profile_id?.startsWith('member-') && Number(profile.calibration_json?.personalizationVersion || 0) < PERSONALIZATION_VERSION);
+}
+
+export function needsDeficitProtocolNotice(profile) {
+  return Boolean(
+    profile?.profile_id?.startsWith('member-')
+    && Number(profile.questionnaire_json?.deficitProtocolNoticeVersion || 0) < DEFICIT_NOTICE_VERSION
+  );
 }
 
 export function previewPersonalizationUpgrade(profile, supplement) {

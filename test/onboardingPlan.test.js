@@ -4,6 +4,7 @@ import {
   activateDeficitProtocol,
   generateNutritionProfile,
   getDeficitProtocolState,
+  needsDeficitProtocolNotice,
   needsPersonalizationUpgrade,
   normalizeTimedProtocols,
   previewPersonalizationUpgrade,
@@ -73,6 +74,16 @@ test('aucun prospect ne reçoit un déficit permanent à son inscription', () =>
   const profile = generateNutritionProfile(answers({ goal: 'loss' }), 'user-loss');
   assert.equal(profile.plan_modes_json.deficit, undefined);
   assert.equal(getDeficitProtocolState(profile, new Date(profile.calibration_json.startedAt)).status, 'locked');
+});
+
+test('les prospects actuels doivent confirmer l’information Déficit une seule fois', () => {
+  const currentProspect = generateNutritionProfile(answers({}), 'user-current-notice');
+  delete currentProspect.questionnaire_json.deficitProtocolNoticeVersion;
+  assert.equal(needsDeficitProtocolNotice(currentProspect), true);
+  currentProspect.questionnaire_json.deficitProtocolNoticeVersion = 1;
+  currentProspect.questionnaire_json.deficitProtocolNoticeAcknowledgedAt = '2026-08-23T12:00:00.000Z';
+  assert.equal(needsDeficitProtocolNotice(currentProspect), false);
+  assert.equal(needsDeficitProtocolNotice({ ...currentProspect, profile_id: 'luca', questionnaire_json: {} }), false);
 });
 
 test('les pas, le métier et les entraînements personnalisent réellement la cible', () => {
