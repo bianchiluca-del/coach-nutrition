@@ -446,15 +446,20 @@ const MODE_EXPERIENCE = {
   training: { label: 'Hard', emoji: '🔥', desc: 'Journée avec entraînement' },
   hard: { label: 'Hard', emoji: '🔥', desc: 'Journée avec entraînement' },
   rest: { label: 'Déficit', emoji: '📉', desc: 'Ancien mode à remplacer par le questionnaire personnalisé' },
-  deficit: { label: 'Déficit (ancien plan)', emoji: '📉', desc: 'À réévaluer avec le questionnaire complémentaire' },
+  deficit: { label: 'Déficit', emoji: '📉', desc: 'Journée allégée' },
 };
 
 export function upgradeNutritionProfileExperience(profile) {
   if (!profile?.plan_modes_json) return profile;
   const planModes = Object.fromEntries(Object.entries(profile.plan_modes_json).map(([key, mode]) => {
     const timedDeficit = (mode?.id === 'deficit' || key === 'deficit') && profile.calibration_json?.deficitProtocol?.status === 'active';
+    const legacyMemberDeficit = (mode?.id === 'deficit' || key === 'deficit' || mode?.id === 'rest' || key === 'rest')
+      && profile.profile_id?.startsWith('member-')
+      && Number(profile.calibration_json?.personalizationVersion || 0) < PERSONALIZATION_VERSION;
     const experience = timedDeficit
       ? { label: 'Déficit · 7 jours', emoji: '📉', desc: 'Protocole spécifique et temporaire' }
+      : legacyMemberDeficit
+        ? { label: 'Déficit (ancien plan)', emoji: '📉', desc: 'À réévaluer avec le questionnaire complémentaire' }
       : MODE_EXPERIENCE[mode?.id] || MODE_EXPERIENCE[key] || {};
     return [key, { ...mode, ...experience, plan: (mode?.plan || []).map(row => ({ ...row, color: row.color || 'from-violet-50 to-indigo-50', border: row.border || 'border-violet-200', items: (row.items || []).map(item => ({ ...item, swappable: item.swappable || 'protein' })) })) }];
   }));

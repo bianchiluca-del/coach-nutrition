@@ -136,6 +136,15 @@ test('les profils existants gardent leur plan tant que le complément n’est pa
   assert.equal(JSON.stringify(legacy.plan_modes_json), planBefore);
 });
 
+test('seuls les anciens prospects reçoivent le libellé ancien plan', () => {
+  const prospect = generateNutritionProfile(answers({}), 'user-old-label');
+  prospect.calibration_json.personalizationVersion = 0;
+  prospect.plan_modes_json.deficit = { ...prospect.plan_modes_json.standard, id: 'deficit', label: 'Déficit' };
+  const personal = { ...structuredClone(prospect), profile_id: 'luca' };
+  assert.equal(upgradeNutritionProfileExperience(prospect).plan_modes_json.deficit.label, 'Déficit (ancien plan)');
+  assert.equal(upgradeNutritionProfileExperience(personal).plan_modes_json.deficit.label, 'Déficit');
+});
+
 test('l’aperçu complémentaire préserve le démarrage et révise seulement le plan futur', () => {
   const legacy = generateNutritionProfile(answers({}), 'user-preview', { startedAt: '2026-07-01T08:00:00.000Z' });
   legacy.calibration_json.personalizationVersion = 0;
