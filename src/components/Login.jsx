@@ -3,9 +3,13 @@ import { LogIn, UserPlus, Mail, Lock, RotateCcw, ShieldCheck, AlertCircle, Check
 import { supabase } from '../lib/supabaseClient';
 import { checkBetaInvite, rememberPendingInvite } from '../lib/betaAccess';
 import { passwordValidationMessage } from '../lib/passwordPolicy';
+import { resolveAuthRedirectUrl } from '../lib/authRedirect';
 
 export default function Login() {
-  const authRedirectUrl = new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+  const authRedirectUrl = resolveAuthRedirectUrl({
+    href: window.location.href,
+    baseUrl: import.meta.env.BASE_URL,
+  });
   const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
