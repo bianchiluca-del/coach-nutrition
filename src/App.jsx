@@ -2805,6 +2805,12 @@ const MESURE_FIELDS = [
   { key:'cuisseD', label:'Cuisse D', unit:'cm', good:'decrease' },
   { key:'cuisseG', label:'Cuisse G', unit:'cm', good:'decrease' },
 ];
+const parseMeasurementNumber = value => Number(String(value ?? '').trim().replace(',', '.'));
+const normalizeMeasurementValue = value => {
+  if (String(value ?? '').trim() === '') return '';
+  const parsed = parseMeasurementNumber(value);
+  return Number.isFinite(parsed) ? parsed : value;
+};
 const MesuresView = ({ profileId, mesuresData, onUpdateMesures, captureRequest, onMeasurementCaptured, progressReport }) => {
   const entries = [...(mesuresData[profileId]||[])].sort((a,b)=>new Date(a.date)-new Date(b.date));
   const [showForm, setShowForm] = useState(false);
@@ -2823,11 +2829,18 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures, captureRequest, 
   }, [captureRequest]);
   const save = () => {
     if(!form.date) return;
-    if (captureRequest && !editId && (!Number.isFinite(Number(form.poids)) || Number(form.poids) <= 20 || Number(form.poids) >= 350)) {
+    const weight = parseMeasurementNumber(form.poids);
+    const hasWeight = String(form.poids ?? '').trim() !== '';
+    if ((captureRequest && !editId && !hasWeight) || (hasWeight && (!Number.isFinite(weight) || weight <= 20 || weight >= 350))) {
       setFormError('Indique un poids valide pour terminer cette pesée.');
       return;
     }
-    onUpdateMesures(profileId, editId?'edit':'add', {...form, id:editId||`m-${Date.now()}`});
+    const normalizedForm = {
+      ...form,
+      ...Object.fromEntries(MESURE_FIELDS.map(field => [field.key, normalizeMeasurementValue(form[field.key])])),
+      id: editId || `m-${Date.now()}`,
+    };
+    onUpdateMesures(profileId, editId?'edit':'add', normalizedForm);
     if (captureRequest && !editId) onMeasurementCaptured?.();
     setShowForm(false);
   };
@@ -2871,7 +2884,7 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures, captureRequest, 
       {first&&last&&entries.length>1&&(
         <div className="grid grid-cols-2 gap-3">
           {[{key:'poids',label:'Poids',bg:'from-blue-50 to-indigo-50',border:'border-blue-100',c:'text-blue-700',unit:'kg'},{key:'poitrine',label:'Poitrine',bg:'from-purple-50 to-pink-50',border:'border-purple-100',c:'text-purple-700',unit:'cm'},{key:'nombril',label:'Nombril',bg:'from-emerald-50 to-teal-50',border:'border-emerald-100',c:'text-emerald-700',unit:'cm'},{key:'fesses',label:'Fesses',bg:'from-amber-50 to-orange-50',border:'border-amber-100',c:'text-amber-700',unit:'cm'}].map(({key,label,bg,border,c,unit}) => {
-            const fv=parseFloat(first[key]); const lv=parseFloat(last[key]); const delta=(fv&&lv)?lv-fv:null;
+            const fv=parseMeasurementNumber(first[key]); const lv=parseMeasurementNumber(last[key]); const delta=(fv&&lv)?lv-fv:null;
             return (
               <div key={key} className={`bg-gradient-to-br ${bg} border ${border} rounded-2xl p-3`}>
                 <div className={`text-[9px] font-bold uppercase tracking-wider ${c} opacity-60 mb-1`}>{label}</div>
@@ -2897,7 +2910,8 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures, captureRequest, 
             <div className="grid grid-cols-4 divide-x divide-y divide-slate-100">
               {MESURE_FIELDS.map(field => {
                 const val=entry[field.key]; const prevVal=prev?.[field.key];
-                const delta=(val&&prevVal&&!isNaN(+val)&&!isNaN(+prevVal))?(+val)-(+prevVal):null;
+                const currentValue=parseMeasurementNumber(val); const previousValue=parseMeasurementNumber(prevVal);
+                const delta=(val&&prevVal&&Number.isFinite(currentValue)&&Number.isFinite(previousValue))?currentValue-previousValue:null;
                 const isGood=delta!==null?(field.good==='decrease'?delta<0:true):null;
                 return (
                   <div key={field.key} className="p-2 text-center">
@@ -2928,7 +2942,7 @@ const MesuresView = ({ profileId, mesuresData, onUpdateMesures, captureRequest, 
                 {MESURE_FIELDS.map(field=>(
                   <div key={field.key}>
                     <label className="text-[11px] font-medium text-slate-500 block mb-1">{field.label} ({field.unit})</label>
-                    <input type="text" inputMode="decimal" autoFocus={field.key==='poids' && !editId} value={form[field.key]||''} onFocus={e=>e.target.select()} onChange={e=>{ setFormError(''); setForm(f=>({...f,[field.key]:e.target.value})); }} placeholder={field.key==='poids'?'70':'90'} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-300 text-base text-slate-800"/>
+                    <input type="text" inputMode="decimal" autoFocus={field.key==='poids' && !editId} value={form[field.key]||''} onFocus={e=>e.target.select()} onChange={e=>{ setFormError(''); setForm(f=>({...f,[field.key]:e.target.value})); }} placeholder={field.key==='poids'?'ex. 82,4':'90'} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-300 text-base text-slate-800"/>
                   </div>
                 ))}
               </div>
