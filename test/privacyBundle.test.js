@@ -5,6 +5,11 @@ import test from 'node:test';
 const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
 const htmlSource = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
+test('le fichier principal ne contient aucun diagnostic d’outil injecté', () => {
+  assert.match(appSource, /^import\s/);
+  assert.doesNotMatch(appSource, /(?:Warning: truncated output|Total output lines:|tokens truncated)/);
+});
+
 test('aucun profil personnel historique n’est intégré au frontend', () => {
   const forbidden = [/PLAN_LUCA/i, /PLAN_EMILIE/i, /70 kg/i, /infirmière/i, /garde de nuit/i];
   for (const pattern of forbidden) {
