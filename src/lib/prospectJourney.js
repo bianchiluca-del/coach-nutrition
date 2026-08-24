@@ -25,8 +25,10 @@ const safeDate = value => {
 
 const localDateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
+const parseWeight = value => Number(String(value ?? '').trim().replace(',', '.'));
+
 const validWeightPoints = measurements => measurements
-  .map(item => ({ date: safeDate(`${item.date || ''}T12:00:00`) || safeDate(item.date), weight: Number(item.poids) }))
+  .map(item => ({ date: safeDate(`${item.date || ''}T12:00:00`) || safeDate(item.date), weight: parseWeight(item.poids) }))
   .filter(item => item.date && Number.isFinite(item.weight) && item.weight > 20 && item.weight < 350)
   .sort((a, b) => a.date - b.date);
 
@@ -84,7 +86,10 @@ export function getWeighInAction(calibration = {}, measurements = [], now = new 
   const requiredDays = phase.id === 'stabilization' ? [1] : phase.weighInDays;
   if (!requiredDays.includes(now.getDay())) return null;
   const dateKey = localDateKey(now);
-  const alreadyRecorded = measurements.some(item => item.date === dateKey && Number(item.poids) > 20 && Number(item.poids) < 350);
+  const alreadyRecorded = measurements.some(item => {
+    const weight = parseWeight(item.poids);
+    return item.date === dateKey && weight > 20 && weight < 350;
+  });
   if (alreadyRecorded) return null;
   return {
     dateKey,
