@@ -26,6 +26,11 @@ test('la carte de pesée apparaît seulement le jour requis puis disparaît apr�
   assert.equal(getWeighInAction(calibration, [], new Date(2026, 7, 11, 8, 0)), null);
 });
 
+test('une pesée décimale avec une virgule est reconnue comme enregistrée', () => {
+  const monday = new Date(2026, 7, 10, 8, 0);
+  assert.equal(getWeighInAction(calibration, [{ date: '2026-08-10', poids: '80,4' }], monday), null);
+});
+
 test('la pesée facultative du samedi ne déclenche plus de carte en phase 3', () => {
   assert.equal(getWeighInAction(calibration, [], new Date(2026, 9, 3, 8, 0)), null);
 });
@@ -45,6 +50,17 @@ test('une tendance insuffisante en perte déclenche seulement un petit palier', 
   ]);
   assert.equal(result.ready, true);
   assert.equal(result.kcal, -100);
+});
+
+test('les rapports comptent les grammes saisis avec une virgule', () => {
+  const result = getAdjustmentRecommendation('loss', [
+    { date: '2026-08-01', poids: '80,4' }, { date: '2026-08-04', poids: '80,3' },
+    { date: '2026-08-08', poids: '80,2' }, { date: '2026-08-11', poids: '80,1' },
+    { date: '2026-08-15', poids: '80,0' }, { date: '2026-08-18', poids: '79,9' },
+  ]);
+  assert.equal(result.ready, true);
+  assert.equal(result.firstAverage, 80.3);
+  assert.equal(result.lastAverage, 80);
 });
 
 const phaseMeasurements = [
